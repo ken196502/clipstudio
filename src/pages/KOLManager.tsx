@@ -1,0 +1,153 @@
+import { useState } from 'react';
+import { useAppStore, KOL } from '../store';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Play, Plus, PauseCircle, Terminal } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+export default function KOLManager() {
+  const { kols, updateKOL, triggerJob } = useAppStore();
+  const [editingKol, setEditingKol] = useState<KOL | null>(null);
+
+  const handleSave = () => {
+    if (editingKol) {
+      updateKOL(editingKol.id, editingKol);
+      setEditingKol(null);
+    }
+  };
+
+  return (
+    <div className="space-y-6 max-w-6xl mx-auto">
+      <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-display font-bold tracking-tight text-white uppercase flex items-center gap-2">
+            <Terminal className="w-6 h-6 text-amber-500" />
+            TARGET ENTITIES
+          </h1>
+          <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest">Manage tracked channels and scrape policies</p>
+        </div>
+        <Button className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-display uppercase tracking-widest rounded-sm h-10 px-6 font-bold" onClick={() => {/* Open add dialog */}}>
+          <Plus className="w-4 h-4 mr-2" />
+          Add Entity
+        </Button>
+      </div>
+
+      <div className="bg-zinc-900/40 border border-zinc-800 rounded-sm overflow-hidden backdrop-blur-sm">
+        <table className="w-full text-sm text-left">
+          <thead className="bg-zinc-950/80 border-b border-zinc-800 text-zinc-500 font-display uppercase tracking-widest text-xs">
+            <tr>
+              <th className="px-6 py-4 font-bold">Entity Name</th>
+              <th className="px-6 py-4 font-bold">Source URI</th>
+              <th className="px-6 py-4 font-bold">Configuration</th>
+              <th className="px-6 py-4 font-bold">Status</th>
+              <th className="px-6 py-4 font-bold">Next Cycle</th>
+              <th className="px-6 py-4 font-bold text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800/50 font-mono text-sm">
+            <AnimatePresence>
+              {kols.map((kol, idx) => (
+                <motion.tr 
+                  key={kol.id} 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: idx * 0.1 }}
+                  className="hover:bg-zinc-800/30 transition-colors group"
+                >
+                  <td className="px-6 py-4 text-zinc-100 font-bold">{kol.name}</td>
+                  <td className="px-6 py-4 text-zinc-500">{kol.channel_url}</td>
+                  <td className="px-6 py-4">
+                    <div className="flex flex-wrap gap-2">
+                      {kol.tags.map(tag => (
+                        <span key={tag} className="px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-300 text-[10px] tracking-widest uppercase border border-zinc-700">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4 text-xs font-bold uppercase tracking-widest">
+                    {kol.active ? (
+                      <span className="text-amber-500 flex items-center gap-2 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]">
+                        <span className="w-1.5 h-1.5 rounded-sm bg-amber-500" />
+                        Active
+                      </span>
+                    ) : (
+                      <span className="text-zinc-600 flex items-center gap-2">
+                        <PauseCircle className="w-3 h-3" />
+                        Halted
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 text-zinc-500">
+                    {kol.nextRun || '—'}
+                  </td>
+                  <td className="px-6 py-4 text-right space-x-2">
+                    <Button variant="ghost" size="sm" onClick={() => setEditingKol(kol)} className="h-8 rounded-sm text-zinc-500 hover:text-white uppercase text-xs tracking-widest font-bold group hover-fx">
+                      CONFIG
+                    </Button>
+                    {kol.active === 1 && (
+                      <Button variant="ghost" size="sm" onClick={() => triggerJob(kol.id)} className="h-8 rounded-sm text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 uppercase text-xs tracking-widest font-bold group hover-fx">
+                        <Play className="w-4 h-4 mr-1.5 group-hover-wiggle" fill="currentColor" /> EXECUTE
+                      </Button>
+                    )}
+                  </td>
+                </motion.tr>
+              ))}
+            </AnimatePresence>
+          </tbody>
+        </table>
+      </div>
+
+      <Dialog open={!!editingKol} onOpenChange={(open) => !open && setEditingKol(null)}>
+        <DialogContent className="sm:max-w-[480px] bg-zinc-950 border border-zinc-800 p-0 rounded-sm overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.8)]">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b border-zinc-800 bg-zinc-900/50">
+            <DialogTitle className="font-display uppercase tracking-widest text-zinc-100 flex items-center gap-2 text-sm font-bold">
+              <span className="w-2 h-2 bg-amber-500 rounded-sm" /> CONFIG: {editingKol?.name}
+            </DialogTitle>
+          </DialogHeader>
+          {editingKol && (
+            <div className="px-6 py-6 space-y-5 font-mono">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Source URI</label>
+                <Input 
+                  value={editingKol.channel_url} 
+                  onChange={e => setEditingKol({...editingKol, channel_url: e.target.value})}
+                  className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Cron Schedule</label>
+                <Input 
+                  value={editingKol.fetch_policy.cron || ''} 
+                  onChange={e => setEditingKol({
+                    ...editingKol, 
+                    fetch_policy: { ...editingKol.fetch_policy, cron: e.target.value }
+                  })}
+                  className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                  placeholder="0 3 * * *"
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Classification Tags</label>
+                <Input 
+                  value={editingKol.tags.join(', ')} 
+                  onChange={e => setEditingKol({
+                    ...editingKol, 
+                    tags: e.target.value.split(',').map(s=>s.trim())
+                  })}
+                  className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                  placeholder="tag1, tag2"
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/50 flex gap-2">
+            <Button variant="outline" onClick={() => setEditingKol(null)} className="flex-1 rounded-sm border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white uppercase text-xs tracking-widest font-bold">ABORT</Button>
+            <Button onClick={handleSave} className="flex-1 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 uppercase text-xs tracking-widest font-bold">APPLY</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
