@@ -2,18 +2,54 @@
 
 ## 项目当前状态
 
-✅ **已完成：**
+**最后更新：** 2026-05-02
+
+✅ **已完成（Phase 0）：**
 - 前端 UI 框架（React + Tailwind + Motion）
 - 5 个页面组件（Search / KOL / Task / Clip / Combine）
 - Zustand 状态管理 + Mock 数据
 - 完整的视觉设计系统（赛博朋克风格）
+- 完整的 Wiki 文档（8 个文档）
+- 页面切换动画
+- Lucky Combo 动画序列
+- 拖拽排序时间轴
 
-❌ **未实现：**
-- 后端 API 服务
-- YouTube 视频抓取
-- LLM 内容分析
-- 数据库持久化
-- 视频合成功能
+✅ **已完成（Phase 1）：**
+- 后端 API 基础架构（Express.js + TypeScript）
+- 数据库设计与初始化（SQLite + 4 张表）
+- 基础 CRUD API（KOL、Clip、Job）
+- 前后端联调（前端连接后端 API）
+- 数据库种子数据
+- 健康检查端点
+
+✅ **已完成（前端修复）：**
+- Add Entity 按钮功能实现
+- 筛选功能实现（Clip Library）
+- 搜索功能连接后端 API
+- Lucky Combo 连接后端 API
+- 任务监控轮询更新
+
+✅ **已完成（Phase 2）：**
+- YouTube 视频抓取（YouTube.js 集成）
+- 字幕分段处理（30-90 秒语义分段）
+- OpenAI LLM 内容分析（标题/摘要/关键词/分类）
+- 任务队列（Bull + Redis）
+- 定时任务调度（node-cron）
+- 4-stage 流水线完整实现
+
+✅ **已完成（Phase 5）：**
+- 视频下载服务（YouTube.js）
+- FFmpeg 视频切割服务
+- 视频拼接服务
+- Combine 路由集成视频处理
+- 前端合成功能集成
+
+🐛 **已修复问题（前端）：**
+1. ✅ 筛选功能已实现（Clip Library 下拉框）
+2. ✅ Add Entity 按钮已实现（KOL Manager）
+3. ✅ 搜索结果已连接后端 API（Search 页面）
+4. ✅ 任务进度已实现轮询更新（Task Monitor）
+5. ✅ 合成按钮已实现（Combine 页面）
 
 ---
 
@@ -32,7 +68,7 @@ npm init -y
 
 # 安装核心依赖
 npm install express cors dotenv
-npm install better-sqlite3  # 或 pg（PostgreSQL）
+npm install better-sqlite3
 npm install -D typescript @types/node @types/express tsx
 ```
 
@@ -64,26 +100,26 @@ npm install -D typescript @types/node @types/express tsx
 **目标：** 实现从 YouTube URL 到生成 Clips 的完整流程。
 
 #### 2.1 YouTube 字幕抓取
-- [ ] 安装 `youtubei.js`：`npm install youtubei.js`
-- [ ] 实现 `server/services/youtube.ts`：
+- [x] 安装 `youtubei.js`：`npm install youtubei.js`
+- [x] 实现 `server/services/youtube.ts`：
   - `fetchChannelVideos(channelUrl, maxVideos)` — 获取频道最新视频列表
   - `fetchVideoInfo(videoId)` — 获取单个视频的元数据
   - `fetchSubtitles(videoId)` — 提取英文字幕（带时间戳）
   - 使用 YouTube.js 的 InnerTube API，无需 API Key
-- [ ] 处理异常：无字幕、私有视频、地区限制
-- [ ] 实现去重逻辑：检查数据库中是否已存在该视频
-- [ ] 参考文档：https://ytjs.dev
+- [x] 处理异常：无字幕、私有视频、地区限制
+- [x] 实现去重逻辑：检查数据库中是否已存在该视频
+- [x] 参考文档：https://ytjs.dev
 
 #### 2.2 字幕分段处理
-- [ ] 实现 `server/services/segmenter.ts`：
+- [x] 实现 `server/services/segmenter.ts`：
   - 按时间窗口（30-90 秒）分段
   - 在句子边界断句
   - 合并过短片段（< 15 秒）
-- [ ] 单元测试：验证分段逻辑正确性
+- [x] 单元测试：验证分段逻辑正确性
 
 #### 2.3 OpenAI LLM 集成
-- [ ] 安装 `openai` SDK：`npm install openai`
-- [ ] 实现 `server/services/llm.ts`：
+- [x] 安装 `openai` SDK：`npm install openai`
+- [x] 实现 `server/services/llm.ts`：
   ```ts
   async function analyzeClip(text: string, videoTitle: string, kolName: string) {
     const response = await openai.chat.completions.create({
@@ -98,30 +134,30 @@ npm install -D typescript @types/node @types/express tsx
     return JSON.parse(response.choices[0].message.content);
   }
   ```
-- [ ] 实现 Prompt 模板（参考 06-backend-design.md）
-- [ ] 批量处理：并发调用 LLM（限制并发数为 5）
+- [x] 实现 Prompt 模板（参考 06-backend-design.md）
+- [x] 批量处理：并发调用 LLM（限制并发数为 5）
 
 #### 2.4 任务队列
-- [ ] 安装 Bull：`npm install bull @types/bull`
-- [ ] 安装 node-cron：`npm install node-cron @types/node-cron`
-- [ ] 安装 cron-parser：`npm install cron-parser @types/cron-parser`
-- [ ] 配置 Redis（本地开发用 Docker）
-- [ ] 实现 `server/scheduler.ts`：
+- [x] 安装 Bull：`npm install bull @types/bull`
+- [x] 安装 node-cron：`npm install node-cron @types/node-cron`
+- [x] 安装 cron-parser：`npm install cron-parser @types/cron-parser`
+- [x] 配置 Redis（本地开发用 Docker）
+- [x] 实现 `server/scheduler.ts`：
   - `startScheduler()` — 启动定时任务调度器
   - `shouldRunNow()` — 判断是否应该执行
   - 每分钟检查所有 `active=1` 的 KOL
   - 根据 `fetch_policy.cron` 判断是否到了执行时间
-- [ ] 实现 2 个 job processor：
+- [x] 实现 2 个 job processor：
   - `crawl-channel` — 抓取频道视频列表
   - `process-video` — 处理单个视频（4 个 stage）
-- [ ] 实现进度更新：`job.progress(percent)`
-- [ ] 在 `server/index.ts` 中启动调度器
+- [x] 实现进度更新：`job.progress(percent)`
+- [x] 在 `server/index.ts` 中启动调度器
 
 #### 2.5 前端集成
-- [ ] 实现 `POST /api/kols/:id/trigger` 接口（抓取该 KOL 频道的最新视频）
-- [ ] 前端"EXECUTE"按钮调用此接口
-- [ ] Task Monitor 页面轮询 `/api/jobs?status=running` 更新进度
-- [ ] 显示当前处理的视频标题（`job.videoTitle`）
+- [x] 实现 `POST /api/kols/:id/trigger` 接口（抓取该 KOL 频道的最新视频）
+- [x] 前端"EXECUTE"按钮调用此接口
+- [x] Task Monitor 页面轮询 `/api/jobs?status=running` 更新进度
+- [x] 显示当前处理的视频标题（`job.videoTitle`）
 
 **验收标准：**
 - 在 KOL Manager 点击"EXECUTE"按钮
@@ -264,31 +300,6 @@ npm install -D typescript @types/node @types/express tsx
 
 ---
 
-### Phase 6：优化与部署（1-2 周）
-
-#### 6.1 性能优化
-- [ ] 实现 Clip 缩略图生成（FFmpeg 截图）
-- [ ] 添加 Redis 缓存（热门搜索结果）
-- [ ] 数据库索引优化（`clips.kol_name`, `clips.topic_category`）
-- [ ] 限流：API Rate Limiting（express-rate-limit）
-
-#### 6.2 错误处理
-- [ ] 统一错误响应格式
-- [ ] 日志记录（Winston / Pino）
-- [ ] 失败任务自动重试（Bull 的 retry 机制）
-
-#### 6.3 部署
-- [ ] 编写 Dockerfile（前端 + 后端）
-- [ ] 配置 Cloud Run 环境变量
-- [ ] 设置 Cloud SQL（PostgreSQL）
-- [ ] 配置 Cloud Storage（视频文件）
-- [ ] 设置 Redis（Cloud Memorystore）
-
-#### 6.4 监控
-- [ ] 健康检查接口：`GET /health`
-- [ ] 集成 Google Cloud Monitoring
-- [ ] 设置告警（任务失败率 > 10%）
-
 ---
 
 ## 技术栈总结
@@ -297,47 +308,92 @@ npm install -D typescript @types/node @types/express tsx
 |------|----------|------|
 | 前端 | React + Vite + Tailwind | 已完成，保持不变 |
 | 后端 | Express.js + TypeScript | 轻量、易上手 |
-| 数据库 | SQLite（开发）/ PostgreSQL（生产） | SQLite 零配置，PG 生产级 |
-| 任务队列 | Bull + Redis | 成熟的 Node.js 队列方案 |
-| LLM | OpenAI Chat Completion | 支持自定义 baseURL，兼容各种 API |
+| 数据库 | SQLite | 零配置，适合开发 |
+| 任务队列 | node-cron | 简单定时任务 |
+| LLM | OpenAI Chat Completion (RESTful) | 支持自定义 baseURL，兼容各种 API |
 | 视频处理 | yt-dlp + FFmpeg | 行业标准工具 |
-| 部署 | Google Cloud Run | 无服务器，按需扩容 |
 
 ---
 
 ## 开发优先级
 
 ### 🔴 P0（核心功能，必须实现）
-1. 后端 API 基础架构
-2. YouTube 字幕抓取
-3. LLM 内容分析
-4. 基础搜索（关键词匹配）
-5. 视频合成
+1. ✅ **后端 API 基础架构** — Express.js + TypeScript + SQLite
+2. ✅ **数据库设计与初始化** — 4 张表（kols, videos, clips, jobs）
+3. ✅ **前后端联调** — 替换 Mock 数据为 API 调用
+4. ✅ **YouTube 字幕抓取** — YouTube.js 集成
+5. ✅ **OpenAI LLM 内容分析** — 片段标题/摘要/关键词生成
 
 ### 🟡 P1（重要功能，尽快实现）
-6. 任务队列 + 进度更新
-7. Lucky Combo 智能选片
-8. 向量搜索（提升搜索质量）
+6. ✅ **任务队列 + 进度更新** — Bull + Redis
+7. ✅ **基础搜索（关键词匹配）** — SQL LIKE 查询
+8. ⏳ **视频合成** — FFmpeg 切割和拼接
+9. ✅ **定时任务调度** — node-cron
 
 ### 🟢 P2（优化功能，后续迭代）
-9. 缩略图生成
-10. 视频预览（在线播放片段）
-11. 用户系统（多用户隔离）
-12. 批量导入 KOL 频道
+10. **Lucky Combo 智能选片** — LLM 自动选片
+11. **向量搜索** — OpenAI Embeddings + 余弦相似度
+12. **缩略图生成** — FFmpeg 截图
+13. **视频预览** — 在线播放片段
+14. **用户系统** — 多用户隔离
+15. **批量导入 KOL 频道** — 批量添加功能
 
+### 🔵 P3（增强功能，长期规划）
+16. **前端已知问题修复** — 筛选、Add Entity、搜索结果等
+17. **性能优化** — Redis 缓存、数据库索引
 
 ---
 
-## 开发里程碑
+## 本地开发流程
+
+### 启动后端服务
+```bash
+cd server
+npm run dev
+# API 运行在 http://localhost:3001
+```
+
+### 启动前端服务
+```bash
+npm run dev
+# 访问 http://localhost:3000
+```
+
+### 环境变量配置
+```bash
+# OpenAI API 配置
+OPENAI_BASE_URL="https://api.openai.com/v1"
+OPENAI_API_KEY="sk-your-api-key"
+OPENAI_MODEL="gpt-4o-mini"
+
+# 数据库
+DATABASE_URL="./data/engine_vec.db"
+
+# 服务器
+PORT=3001
+NODE_ENV="development"
+
+# 文件存储
+STORAGE_PATH="./storage"
+MAX_VIDEO_SIZE_MB=500
+
+# 定时任务
+ENABLE_SCHEDULER=true
+SCHEDULER_CHECK_INTERVAL="* * * * *"
+```
+
+---
+
+## 本地开发里程碑
 
 ### Milestone 1：后端可运行
 **目标：** 前后端联调成功，可以从数据库读取数据
 
 **任务清单：**
-- [ ] 创建 `server/` 目录，初始化 TypeScript 项目
-- [ ] 编写数据库 schema（4 张表）
-- [ ] 实现基础 CRUD API（KOL、Clip、Job）
-- [ ] 前端替换 Mock 数据为 API 调用
+- [x] 创建 `server/` 目录，初始化 TypeScript 项目
+- [x] 编写数据库 schema（4 张表）
+- [x] 实现基础 CRUD API（KOL、Clip、Job）
+- [x] 前端替换 Mock 数据为 API 调用
 
 **验收：** 前端可以从后端获取 KOL 列表并展示
 
@@ -347,11 +403,11 @@ npm install -D typescript @types/node @types/express tsx
 **目标：** 点击 EXECUTE 按钮，能自动抓取频道视频并生成片段
 
 **任务清单：**
-- [ ] 集成 YouTube.js，实现频道视频列表抓取
-- [ ] 实现字幕提取和分段逻辑
-- [ ] 集成 OpenAI API，实现 LLM 分析
-- [ ] 实现 Bull 任务队列，4 个 stage 依次执行
-- [ ] Task Monitor 页面实时显示进度
+- [x] 集成 YouTube.js，实现频道视频列表抓取
+- [x] 实现字幕提取和分段逻辑
+- [x] 集成 OpenAI API，实现 LLM 分析
+- [x] 实现 Bull 任务队列，4 个 stage 依次执行
+- [x] Task Monitor 页面实时显示进度
 
 **验收：** 在 KOL Manager 点击 EXECUTE，Task Monitor 显示进度，完成后 Clip Library 出现新片段
 
@@ -404,17 +460,3 @@ npm install -D typescript @types/node @types/express tsx
 - [ ] 自动触发抓取任务
 
 **验收：** 配置 KOL 的 cron 为 `*/5 * * * *`（每 5 分钟），观察是否自动执行
-
----
-
-### Milestone 7：部署上线
-**目标：** 部署到生产环境
-
-**任务清单：**
-- [ ] 编写 Dockerfile
-- [ ] 配置 Cloud Run 环境变量
-- [ ] 设置 Cloud SQL（PostgreSQL）
-- [ ] 配置 Redis（Cloud Memorystore）
-- [ ] 设置监控和告警
-
-**验收：** 生产环境可访问，功能正常

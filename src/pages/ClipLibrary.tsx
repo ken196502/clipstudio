@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useAppStore, Clip } from '../store';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -9,6 +9,29 @@ import { motion, AnimatePresence } from 'motion/react';
 export default function ClipLibrary() {
   const { clips } = useAppStore();
   const [selectedClip, setSelectedClip] = useState<Clip | null>(null);
+  const [selectedKol, setSelectedKol] = useState('all');
+  const [selectedCategory, setSelectedCategory] = useState('all');
+  const [sortBy, setSortBy] = useState('newest');
+
+  const filteredClips = useMemo(() => {
+    let result = clips;
+
+    if (selectedKol !== 'all') {
+      result = result.filter(c => c.kolName === selectedKol);
+    }
+
+    if (selectedCategory !== 'all') {
+      result = result.filter(c => c.topicCategory === selectedCategory);
+    }
+
+    if (sortBy === 'newest') {
+      result = [...result].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } else {
+      result = [...result].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }
+
+    return result;
+  }, [clips, selectedKol, selectedCategory, sortBy]);
 
   const formatDuration = (start: number, end: number) => {
     const s = Math.floor(start / 60);
@@ -30,7 +53,7 @@ export default function ClipLibrary() {
         </div>
         
         <div className="flex items-center gap-2 font-mono text-xs">
-          <Select defaultValue="all">
+          <Select value={selectedKol} onValueChange={setSelectedKol}>
             <SelectTrigger className="w-[140px] bg-zinc-900 border-zinc-800 rounded-sm uppercase tracking-widest focus:ring-amber-500 font-bold text-[10px]">
               <SelectValue placeholder="SOURCE KOL" />
             </SelectTrigger>
@@ -40,7 +63,7 @@ export default function ClipLibrary() {
               <SelectItem value="硅谷徐">GUIGUXU</SelectItem>
             </SelectContent>
           </Select>
-          <Select defaultValue="all">
+          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
             <SelectTrigger className="w-[140px] bg-zinc-900 border-zinc-800 rounded-sm uppercase tracking-widest focus:ring-amber-500 font-bold text-[10px]">
               <SelectValue placeholder="CATEGORY" />
             </SelectTrigger>
@@ -51,7 +74,7 @@ export default function ClipLibrary() {
               <SelectItem value="教程">TUTORIAL</SelectItem>
             </SelectContent>
           </Select>
-          <Select defaultValue="newest">
+          <Select value={sortBy} onValueChange={setSortBy}>
             <SelectTrigger className="w-[140px] bg-zinc-900 border-zinc-800 rounded-sm uppercase tracking-widest focus:ring-amber-500 font-bold text-[10px]">
               <SelectValue placeholder="SORT" />
             </SelectTrigger>
@@ -65,7 +88,7 @@ export default function ClipLibrary() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <AnimatePresence>
-          {clips.map((clip, idx) => (
+          {filteredClips.map((clip, idx) => (
             <motion.div 
               key={clip.id} 
               initial={{ opacity: 0, scale: 0.9, y: 20 }}

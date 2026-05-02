@@ -1,10 +1,20 @@
+import { useEffect } from 'react';
 import { useAppStore } from '../store';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2, XCircle, RefreshCw, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function TaskMonitor() {
-  const { jobs } = useAppStore();
+  const { jobs, fetchJobs } = useAppStore();
+
+  // Poll for job updates every 2 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      fetchJobs();
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [fetchJobs]);
 
   const runningJobs = jobs.filter(j => j.status === 'running');
   const historyJobs = jobs.filter(j => j.status !== 'running');
@@ -38,7 +48,7 @@ export default function TaskMonitor() {
           </h1>
           <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest">Track scheduler jobs and pipeline status</p>
         </div>
-        <Button variant="outline" className="border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 hover:text-white text-zinc-300 font-display uppercase tracking-widest rounded-sm h-10 px-6 text-xs font-bold transition-all">
+        <Button variant="outline" onClick={() => fetchJobs()} className="border-zinc-700 bg-zinc-900/50 hover:bg-zinc-800 hover:text-white text-zinc-300 font-display uppercase tracking-widest rounded-sm h-10 px-6 text-xs font-bold transition-all">
           <RefreshCw className="w-4 h-4 mr-2" />
           SYNC LOGS
         </Button>

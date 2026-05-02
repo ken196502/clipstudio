@@ -7,13 +7,51 @@ import { Play, Plus, PauseCircle, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function KOLManager() {
-  const { kols, updateKOL, triggerJob } = useAppStore();
+  const { kols, updateKOL, triggerJob, addKOL, isLoading } = useAppStore();
   const [editingKol, setEditingKol] = useState<KOL | null>(null);
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [newKol, setNewKol] = useState<Partial<KOL>>({
+    name: '',
+    channel_url: '',
+    platform: 'youtube',
+    tags: [],
+    fetch_policy: { cron: '0 3 * * *', max_videos: 20 },
+    active: 1
+  });
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (editingKol) {
-      updateKOL(editingKol.id, editingKol);
-      setEditingKol(null);
+      try {
+        await updateKOL(editingKol.id, editingKol);
+        setEditingKol(null);
+      } catch (error) {
+        console.error('Failed to update KOL:', error);
+      }
+    }
+  };
+
+  const handleAdd = async () => {
+    try {
+      await addKOL(newKol as Omit<KOL, 'id' | 'created_at'>);
+      setIsAddDialogOpen(false);
+      setNewKol({
+        name: '',
+        channel_url: '',
+        platform: 'youtube',
+        tags: [],
+        fetch_policy: { cron: '0 3 * * *', max_videos: 20 },
+        active: 1
+      });
+    } catch (error) {
+      console.error('Failed to add KOL:', error);
+    }
+  };
+
+  const handleExecute = async (kolId: number) => {
+    try {
+      await triggerJob(kolId);
+    } catch (error) {
+      console.error('Failed to trigger job:', error);
     }
   };
 
@@ -27,7 +65,7 @@ export default function KOLManager() {
           </h1>
           <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest">Manage tracked channels and scrape policies</p>
         </div>
-        <Button className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-display uppercase tracking-widest rounded-sm h-10 px-6 font-bold" onClick={() => {/* Open add dialog */}}>
+        <Button className="bg-amber-500 hover:bg-amber-400 text-zinc-950 font-display uppercase tracking-widest rounded-sm h-10 px-6 font-bold" onClick={() => setIsAddDialogOpen(true)}>
           <Plus className="w-4 h-4 mr-2" />
           Add Entity
         </Button>
@@ -83,11 +121,11 @@ export default function KOLManager() {
                     {kol.nextRun || '—'}
                   </td>
                   <td className="px-6 py-4 text-right space-x-2">
-                    <Button variant="ghost" size="sm" onClick={() => setEditingKol(kol)} className="h-8 rounded-sm text-zinc-500 hover:text-white uppercase text-xs tracking-widest font-bold group hover-fx">
+                    <Button variant="ghost" size="sm" onClick={() => setEditingKol(kol)} className="h-8 rounded-sm text-zinc-500 hover:text-white uppercase text-xs tracking-widest font-bold group hover-fx" disabled={isLoading}>
                       CONFIG
                     </Button>
                     {kol.active === 1 && (
-                      <Button variant="ghost" size="sm" onClick={() => triggerJob(kol.id)} className="h-8 rounded-sm text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 uppercase text-xs tracking-widest font-bold group hover-fx">
+                      <Button variant="ghost" size="sm" onClick={() => handleExecute(kol.id)} className="h-8 rounded-sm text-amber-500 hover:text-amber-400 hover:bg-amber-500/10 uppercase text-xs tracking-widest font-bold group hover-fx" disabled={isLoading}>
                         <Play className="w-4 h-4 mr-1.5 group-hover-wiggle" fill="currentColor" /> EXECUTE
                       </Button>
                     )}
@@ -145,6 +183,64 @@ export default function KOLManager() {
           <DialogFooter className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/50 flex gap-2">
             <Button variant="outline" onClick={() => setEditingKol(null)} className="flex-1 rounded-sm border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white uppercase text-xs tracking-widest font-bold">ABORT</Button>
             <Button onClick={handleSave} className="flex-1 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 uppercase text-xs tracking-widest font-bold">APPLY</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
+        <DialogContent className="sm:max-w-[480px] bg-zinc-950 border border-zinc-800 p-0 rounded-sm overflow-hidden shadow-[0_0_40px_rgba(0,0,0,0.8)]">
+          <DialogHeader className="px-6 pt-6 pb-4 border-b border-zinc-800 bg-zinc-900/50">
+            <DialogTitle className="font-display uppercase tracking-widest text-zinc-100 flex items-center gap-2 text-sm font-bold">
+              <span className="w-2 h-2 bg-amber-500 rounded-sm" /> ADD NEW ENTITY
+            </DialogTitle>
+          </DialogHeader>
+          <div className="px-6 py-6 space-y-5 font-mono">
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Entity Name</label>
+              <Input
+                value={newKol.name}
+                onChange={e => setNewKol({ ...newKol, name: e.target.value })}
+                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                placeholder="Enter channel name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Source URI</label>
+              <Input
+                value={newKol.channel_url}
+                onChange={e => setNewKol({ ...newKol, channel_url: e.target.value })}
+                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                placeholder="youtube.com/@channel"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Cron Schedule</label>
+              <Input
+                value={newKol.fetch_policy?.cron || ''}
+                onChange={e => setNewKol({
+                  ...newKol,
+                  fetch_policy: { ...newKol.fetch_policy, cron: e.target.value }
+                })}
+                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                placeholder="0 3 * * *"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Classification Tags</label>
+              <Input
+                value={newKol.tags?.join(', ') || ''}
+                onChange={e => setNewKol({
+                  ...newKol,
+                  tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                })}
+                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
+                placeholder="tag1, tag2"
+              />
+            </div>
+          </div>
+          <DialogFooter className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/50 flex gap-2">
+            <Button variant="outline" onClick={() => setIsAddDialogOpen(false)} className="flex-1 rounded-sm border-zinc-700 bg-transparent text-zinc-300 hover:bg-zinc-800 hover:text-white uppercase text-xs tracking-widest font-bold">ABORT</Button>
+            <Button onClick={handleAdd} className="flex-1 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 uppercase text-xs tracking-widest font-bold" disabled={isLoading}>CREATE</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

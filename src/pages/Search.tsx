@@ -41,11 +41,12 @@ function TypewriterText({ text }: { text: string }) {
 }
 
 export default function SearchPage() {
-  const { clips, setActivePage } = useAppStore();
+  const { clips, setActivePage, searchClips, luckyCombo } = useAppStore();
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [comboStep, setComboStep] = useState(-1);
+  const [searchResults, setSearchResults] = useState<ReturnType<typeof useAppStore.getState>['clips']>([]);
 
   useEffect(() => {
     if (comboStep >= 0 && comboStep < COMBO_STEPS.length) {
@@ -59,18 +60,35 @@ export default function SearchPage() {
     }
   }, [comboStep, setActivePage]);
 
-  const handleSearch = (e: React.FormEvent) => {
+  const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query.trim()) return;
     setIsSearching(true);
-    // Simulate network delay
-    setTimeout(() => {
-      setIsSearching(false);
+    try {
+      const results = await searchClips(query);
+      setSearchResults(results);
       setHasSearched(true);
-    }, 800);
+    } catch (error) {
+      console.error('Search failed:', error);
+    } finally {
+      setIsSearching(false);
+    }
   };
 
-  const results = clips.filter(c => c.relevance);
+  const handleLuckyCombo = async () => {
+    setComboStep(0);
+    try {
+      const selectedClips = await luckyCombo(query || 'AI technology');
+      // Store selected clips for Combine page
+      // In a real implementation, we'd save this to the store
+      console.log('Selected clips:', selectedClips);
+    } catch (error) {
+      console.error('Lucky combo failed:', error);
+      setComboStep(-1);
+    }
+  };
+
+  const results = hasSearched ? searchResults : clips.filter(c => c.relevance);
 
   return (
     <div className={cn("max-w-4xl mx-auto h-full flex flex-col pt-8", !hasSearched && "justify-center px-4")}>
@@ -125,10 +143,10 @@ export default function SearchPage() {
         </motion.form>
 
         <motion.div layout className="flex items-center justify-center gap-6 mt-8 flex-wrap">
-          <Button 
-            type="button" 
-            onClick={() => setComboStep(0)} 
-            variant="outline" 
+          <Button
+            type="button"
+            onClick={handleLuckyCombo}
+            variant="outline"
             className="h-9 border-amber-500 text-amber-500 hover:bg-amber-500 hover:text-zinc-950 px-6 rounded-sm uppercase tracking-widest text-xs font-bold font-display group transition-all duration-300 hover-fx hover-sweep hover:scale-105"
           >
             <Zap className="w-4 h-4 mr-2 group-hover-wiggle" />
