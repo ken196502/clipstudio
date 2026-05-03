@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",
+    "yt-dlp:install": "uv venv && uv pip install yt-dlp",
     "test": "NODE_ENV=test vitest run",
     "db:init": "tsx src/db/init.ts",
     "db:seed": "tsx src/db/seed.ts"
@@ -50,5 +51,11 @@
     "tsx": "^4.19.2",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

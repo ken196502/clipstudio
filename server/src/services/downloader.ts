@@ -1,6 +1,6 @@
-import youtubedl from 'youtube-dl-exec';
 import * as fs from 'fs';
 import * as path from 'path';
+import { runYtDlp } from './ytDlp';
 
 export interface DownloadOptions {
   quality?: 'best' | 'worst';
@@ -54,7 +54,7 @@ export function isVideoDownloaded(videoId: string, format: string = 'mp4'): bool
 }
 
 /**
- * Download video from YouTube using youtube-dl-exec
+ * Download video from YouTube using yt-dlp from venv
  */
 export async function downloadVideo(
   videoId: string,
@@ -81,30 +81,29 @@ export async function downloadVideo(
   try {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const proxy = getProxy();
-    const commonOptions: any = {
-      noWarnings: true,
-      callHome: false,
-    };
+    const commonArgs: string[] = ['--no-warnings', '--no-call-home'];
     if (proxy) {
-      commonOptions.proxy = proxy;
+      commonArgs.push('--proxy', proxy);
     }
 
     // Get video info first
-    const info = await youtubedl(videoUrl, {
-      ...commonOptions,
-      dumpJson: true,
-    }) as any;
+    const infoResult = await runYtDlp([...commonArgs, '--dump-json', videoUrl]);
+    const info = JSON.parse(infoResult.stdout.trim()) as any;
 
     const duration = info.duration || 0;
 
     // Download video
     console.log(`  Starting download...`);
-    await youtubedl(videoUrl, {
-      ...commonOptions,
-      format: quality === 'best' ? 'bestvideo+bestaudio/best' : 'worst',
-      mergeOutputFormat: format,
-      output: filePath,
-    });
+    await runYtDlp([
+      ...commonArgs,
+      '--format',
+      quality === 'best' ? 'bestvideo+bestaudio/best' : 'worst',
+      '--merge-output-format',
+      format,
+      '--output',
+      filePath,
+      videoUrl,
+    ]);
 
     // Check if file exists
     if (!fs.existsSync(filePath)) {

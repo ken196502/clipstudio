@@ -141,6 +141,7 @@ export default function Layout() {
                fill="none"
                stroke="currentColor"
                strokeWidth="0.5"
+               points="10,10 90,20 80,90 20,80"
                animate={{
                  points: [
                    "10,10 90,20 80,90 20,80",
@@ -153,6 +154,7 @@ export default function Layout() {
              <motion.polygon
                fill="currentColor"
                opacity="0.1"
+               points="0,0 40,20 60,60 10,50"
                animate={{
                  points: [
                    "0,0 40,20 60,60 10,50",
@@ -166,6 +168,7 @@ export default function Layout() {
                fill="none"
                stroke="currentColor"
                strokeWidth="0.2"
+               points="50,0 100,50 50,100 0,50"
                animate={{
                  points: [
                    "50,0 100,50 50,100 0,50",

@@ -31,7 +31,7 @@ export default function CombinePage() {
     }
 
     try {
-      const response = await fetch('http://localhost:3001/api/combine', {
+      const response = await fetch('/api/combine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -60,7 +60,7 @@ export default function CombinePage() {
 
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`http://localhost:3001/api/combine/${combineTask.taskId}`);
+        const response = await fetch(`/api/combine/${combineTask.taskId}`);
         if (!response.ok) return;
 
         const data = await response.json();
@@ -79,7 +79,7 @@ export default function CombinePage() {
 
   const handleDownload = () => {
     if (combineTask?.downloadUrl) {
-      window.open(`http://localhost:3001${combineTask.downloadUrl}`, '_blank');
+      window.open(combineTask.downloadUrl, '_blank');
     }
   };
 

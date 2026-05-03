@@ -4,12 +4,15 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=3000 --host=0.0.0.0",
+    "dev:web": "vite --port=3000 --host=0.0.0.0",
+    "dev:server": "npx -y node@22 \"$(command -v pnpm)\" -s --dir server dev",
+    "dev": "concurrently -n web,server -c cyan,magenta \"pnpm -s dev:web\" \"pnpm -s dev:server\"",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "postinstall": "pnpm --dir server install && pnpm --dir server yt-dlp:install"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -43,8 +46,15 @@
     "jsdom": "^27.0.1",
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
+    "concurrently": "^9.2.1",
     "typescript": "~5.8.2",
     "vite": "^6.2.3",
     "vitest": "^3.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

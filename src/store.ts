@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
-const API_BASE = 'http://localhost:3001/api';
+const API_ORIGIN = (import.meta as any).env?.VITE_API_ORIGIN || '';
+const API_BASE = `${API_ORIGIN}/api`;
 
 export interface KOL {
   id: number;
@@ -16,6 +17,18 @@ export interface KOL {
   last_run?: string;
   nextRun?: string;
   created_at: string;
+}
+
+export interface CreateKOLPayload {
+  name?: string;
+  channel_url: string;
+  platform?: string;
+  tags?: string[];
+  fetch_policy?: {
+    cron?: string;
+    max_videos?: number;
+  };
+  active?: number;
 }
 
 export interface Job {
@@ -65,7 +78,7 @@ interface AppState {
   fetchKOLs: () => Promise<void>;
   fetchJobs: () => Promise<void>;
   fetchClips: () => Promise<void>;
-  addKOL: (kol: Omit<KOL, 'id' | 'created_at'>) => Promise<void>;
+  addKOL: (kol: CreateKOLPayload) => Promise<void>;
   updateKOL: (id: number, kol: Partial<KOL>) => Promise<void>;
   triggerJob: (kolId: number) => Promise<void>;
   searchClips: (query: string) => Promise<Clip[]>;
@@ -89,7 +102,7 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
 
     return await response.json();
   } catch (error) {
-    console.error(`API Error (${endpoint}):`, error);
+    console.error(`API Error (${endpoint})`, { API_BASE }, error);
     throw error;
   }
 }

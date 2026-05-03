@@ -1,4 +1,4 @@
-import youtubedl from 'youtube-dl-exec';
+import { runYtDlp } from './src/services/ytDlp';
 
 async function testChannelBrowse() {
   try {
@@ -15,15 +15,15 @@ async function testChannelBrowse() {
       console.log(`\nTesting channel: ${channelUrl}`);
 
       try {
-        const videos = await youtubedl(channelUrl, {
-          dumpJson: true,
-          flatPlaylist: true,
-          playlistEnd: 3,
-          noWarnings: true,
-          proxy: proxy
-        }) as any;
-
-        const videoList = Array.isArray(videos) ? videos : (videos.entries || []);
+        const args = ['--dump-json', '--flat-playlist', '--playlist-end', '3', '--no-warnings'];
+        if (proxy) {
+          args.push('--proxy', proxy);
+        }
+        const result = await runYtDlp([...args, channelUrl]);
+        const videoList = result.stdout
+          .split('\n')
+          .filter((line) => line.trim())
+          .map((line) => JSON.parse(line));
         console.log(`  Found ${videoList.length} videos`);
 
         if (videoList.length > 0) {
@@ -35,7 +35,8 @@ async function testChannelBrowse() {
           break;
         }
       } catch (error) {
-        console.log(`  ❌ Failed: ${error.message}`);
+        const message = error instanceof Error ? error.message : String(error);
+        console.log(`  ❌ Failed: ${message}`);
       }
     }
 

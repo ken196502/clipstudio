@@ -12,6 +12,29 @@ export default function ClipLibrary() {
   const [selectedKol, setSelectedKol] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
+  const kolOptions = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        clips
+          .map((clip) => clip.kolName)
+          .filter((name) => typeof name === 'string' && name.trim().length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    console.log('[ClipLibrary] KOL options built:', values);
+    return values;
+  }, [clips]);
+
+  const categoryOptions = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        clips
+          .map((clip) => clip.topicCategory)
+          .filter((category) => typeof category === 'string' && category.trim().length > 0)
+      )
+    ).sort((a, b) => a.localeCompare(b, 'zh-CN'));
+    console.log('[ClipLibrary] Category options built:', values);
+    return values;
+  }, [clips]);
 
   const filteredClips = useMemo(() => {
     let result = clips;
@@ -30,6 +53,13 @@ export default function ClipLibrary() {
       result = [...result].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }
 
+    console.log('[ClipLibrary] Filter result:', {
+      total: clips.length,
+      selectedKol,
+      selectedCategory,
+      sortBy,
+      filtered: result.length,
+    });
     return result;
   }, [clips, selectedKol, selectedCategory, sortBy]);
 
@@ -59,8 +89,11 @@ export default function ClipLibrary() {
             </SelectTrigger>
             <SelectContent className="bg-zinc-950 border-zinc-800 rounded-sm font-mono uppercase text-[10px] font-bold tracking-widest">
               <SelectItem value="all">ALL ENTITIES</SelectItem>
-              <SelectItem value="李自然">LIZIRAN</SelectItem>
-              <SelectItem value="硅谷徐">GUIGUXU</SelectItem>
+              {kolOptions.map((kol) => (
+                <SelectItem key={kol} value={kol}>
+                  {kol}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={selectedCategory} onValueChange={setSelectedCategory}>
@@ -69,9 +102,11 @@ export default function ClipLibrary() {
             </SelectTrigger>
             <SelectContent className="bg-zinc-950 border-zinc-800 rounded-sm font-mono uppercase text-[10px] font-bold tracking-widest">
               <SelectItem value="all">ALL CATS</SelectItem>
-              <SelectItem value="观点">OPINION</SelectItem>
-              <SelectItem value="分析">ANALYSIS</SelectItem>
-              <SelectItem value="教程">TUTORIAL</SelectItem>
+              {categoryOptions.map((category) => (
+                <SelectItem key={category} value={category}>
+                  {category}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={sortBy} onValueChange={setSortBy}>

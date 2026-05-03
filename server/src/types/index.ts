@@ -59,7 +59,7 @@ export interface Job {
 }
 
 export interface CreateKOLRequest {
-  name: string;
+  name?: string;
   channel_url: string;
   tags?: string[];
   fetch_policy?: {

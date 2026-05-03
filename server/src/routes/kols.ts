@@ -3,8 +3,15 @@ import { db } from '../db/init';
 import type { KOL, CreateKOLRequest, UpdateKOLRequest } from '../types';
 import { processJob } from '../services/job-processor';
 import { AppError, asyncHandler } from '../middleware/error-handler';
+import { extractChannelHandle } from '../services/youtube';
 
 const router = express.Router();
+
+function deriveNameFromChannelUrl(channelUrl: string): string {
+  const channelHandle = extractChannelHandle(channelUrl).trim();
+  if (!channelHandle) return channelUrl;
+  return channelHandle.replace(/^@/, '');
+}
 
 // GET /api/kols - Get all KOLs
 router.get('/', asyncHandler(async (req: Request, res: Response) => {
@@ -30,15 +37,23 @@ router.get('/', asyncHandler(async (req: Request, res: Response) => {
 router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { name, channel_url, tags = [], fetch_policy = {}, active = 1 } = req.body as CreateKOLRequest;
 
-  if (!name || !channel_url) {
-    throw new AppError(400, 'name and channel_url are required');
+  if (!channel_url) {
+    throw new AppError(400, 'channel_url is required');
   }
+
+  const resolvedName = (name || '').trim() || deriveNameFromChannelUrl(channel_url);
+  console.log('[kols:create] incoming payload:', {
+    channel_url,
+    hasName: Boolean(name),
+    resolvedName,
+    tagsCount: Array.isArray(tags) ? tags.length : 0,
+  });
 
   const result = db.prepare(`
     INSERT INTO kols (name, channel_url, platform, tags, fetch_policy, active)
     VALUES (?, ?, 'youtube', ?, ?, ?)
   `).run(
-    name,
+    resolvedName,
     channel_url,
     JSON.stringify(tags),
     JSON.stringify(fetch_policy),

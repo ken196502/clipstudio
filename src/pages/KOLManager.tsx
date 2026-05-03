@@ -6,16 +6,53 @@ import { Input } from '@/components/ui/input';
 import { Play, Plus, PauseCircle, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+const WEEKDAY_OPTIONS = [
+  { label: '周日', value: '0' },
+  { label: '周一', value: '1' },
+  { label: '周二', value: '2' },
+  { label: '周三', value: '3' },
+  { label: '周四', value: '4' },
+  { label: '周五', value: '5' },
+  { label: '周六', value: '6' },
+];
+
+const HOUR_OPTIONS = Array.from({ length: 24 }, (_, hour) => ({
+  label: `${hour.toString().padStart(2, '0')}:00`,
+  value: hour.toString(),
+}));
+
+function buildWeeklyCron(weekday: string, hour: string): string {
+  return `0 ${hour} * * ${weekday}`;
+}
+
+function parseWeeklyCron(cronExpr?: string): { weekday: string; hour: string } {
+  const defaultValues = { weekday: '1', hour: '3' };
+  if (!cronExpr) return defaultValues;
+
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length !== 5) return defaultValues;
+
+  const hour = parts[1];
+  const weekday = parts[4];
+  if (!/^\d+$/.test(hour) || Number(hour) > 23) return defaultValues;
+  if (!/^[0-6]$/.test(weekday)) return defaultValues;
+
+  return { weekday, hour };
+}
+
 export default function KOLManager() {
   const { kols, updateKOL, triggerJob, addKOL, isLoading } = useAppStore();
   const [editingKol, setEditingKol] = useState<KOL | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
+  const [addSchedule, setAddSchedule] = useState<{ weekday: string; hour: string }>({
+    weekday: '1',
+    hour: '3',
+  });
   const [newKol, setNewKol] = useState<Partial<KOL>>({
-    name: '',
     channel_url: '',
     platform: 'youtube',
     tags: [],
-    fetch_policy: { cron: '0 3 * * *', max_videos: 20 },
+    fetch_policy: { cron: buildWeeklyCron('1', '3'), max_videos: 20 },
     active: 1
   });
 
@@ -32,14 +69,14 @@ export default function KOLManager() {
 
   const handleAdd = async () => {
     try {
-      await addKOL(newKol as Omit<KOL, 'id' | 'created_at'>);
+      await addKOL(newKol);
       setIsAddDialogOpen(false);
+      setAddSchedule({ weekday: '1', hour: '3' });
       setNewKol({
-        name: '',
         channel_url: '',
         platform: 'youtube',
         tags: [],
-        fetch_policy: { cron: '0 3 * * *', max_videos: 20 },
+        fetch_policy: { cron: buildWeeklyCron('1', '3'), max_videos: 20 },
         active: 1
       });
     } catch (error) {
@@ -96,13 +133,7 @@ export default function KOLManager() {
                   <td className="px-6 py-4 text-zinc-100 font-bold">{kol.name}</td>
                   <td className="px-6 py-4 text-zinc-500">{kol.channel_url}</td>
                   <td className="px-6 py-4">
-                    <div className="flex flex-wrap gap-2">
-                      {kol.tags.map(tag => (
-                        <span key={tag} className="px-2 py-0.5 rounded-sm bg-zinc-800 text-zinc-300 text-[10px] tracking-widest uppercase border border-zinc-700">
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
+                    <span className="text-zinc-400">{kol.tags?.[0] || '—'}</span>
                   </td>
                   <td className="px-6 py-4 text-xs font-bold uppercase tracking-widest">
                     {kol.active ? (
@@ -154,28 +185,69 @@ export default function KOLManager() {
                   className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
                 />
               </div>
+              {(() => {
+                const { weekday, hour } = parseWeeklyCron(editingKol.fetch_policy?.cron);
+                return (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Weekday</label>
+                      <select
+                        value={weekday}
+                        onChange={e => {
+                          const nextWeekday = e.target.value;
+                          setEditingKol({
+                            ...editingKol,
+                            fetch_policy: {
+                              ...editingKol.fetch_policy,
+                              cron: buildWeeklyCron(nextWeekday, hour),
+                            },
+                          });
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10 px-3"
+                      >
+                        {WEEKDAY_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Time (24h)</label>
+                      <select
+                        value={hour}
+                        onChange={e => {
+                          const nextHour = e.target.value;
+                          setEditingKol({
+                            ...editingKol,
+                            fetch_policy: {
+                              ...editingKol.fetch_policy,
+                              cron: buildWeeklyCron(weekday, nextHour),
+                            },
+                          });
+                        }}
+                        className="w-full bg-zinc-900 border border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10 px-3"
+                      >
+                        {HOUR_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Cron Schedule</label>
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Remark (Optional)</label>
                 <Input 
-                  value={editingKol.fetch_policy.cron || ''} 
+                  value={editingKol.tags?.[0] || ''} 
                   onChange={e => setEditingKol({
                     ...editingKol, 
-                    fetch_policy: { ...editingKol.fetch_policy, cron: e.target.value }
+                    tags: e.target.value.trim() ? [e.target.value.trim()] : []
                   })}
                   className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                  placeholder="0 3 * * *"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Classification Tags</label>
-                <Input 
-                  value={editingKol.tags.join(', ')} 
-                  onChange={e => setEditingKol({
-                    ...editingKol, 
-                    tags: e.target.value.split(',').map(s=>s.trim())
-                  })}
-                  className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                  placeholder="tag1, tag2"
+                  placeholder="可选备注"
                 />
               </div>
             </div>
@@ -196,15 +268,6 @@ export default function KOLManager() {
           </DialogHeader>
           <div className="px-6 py-6 space-y-5 font-mono">
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Entity Name</label>
-              <Input
-                value={newKol.name}
-                onChange={e => setNewKol({ ...newKol, name: e.target.value })}
-                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                placeholder="Enter channel name"
-              />
-            </div>
-            <div className="space-y-2">
               <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Source URI</label>
               <Input
                 value={newKol.channel_url}
@@ -213,28 +276,66 @@ export default function KOLManager() {
                 placeholder="youtube.com/@channel"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Cron Schedule</label>
-              <Input
-                value={newKol.fetch_policy?.cron || ''}
-                onChange={e => setNewKol({
-                  ...newKol,
-                  fetch_policy: { ...newKol.fetch_policy, cron: e.target.value }
-                })}
-                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                placeholder="0 3 * * *"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Weekday</label>
+                <select
+                  value={addSchedule.weekday}
+                  onChange={e => {
+                    const nextWeekday = e.target.value;
+                    setAddSchedule(prev => ({ ...prev, weekday: nextWeekday }));
+                    setNewKol({
+                      ...newKol,
+                      fetch_policy: {
+                        ...newKol.fetch_policy,
+                        cron: buildWeeklyCron(nextWeekday, addSchedule.hour),
+                      },
+                    });
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10 px-3"
+                >
+                  {WEEKDAY_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Time (24h)</label>
+                <select
+                  value={addSchedule.hour}
+                  onChange={e => {
+                    const nextHour = e.target.value;
+                    setAddSchedule(prev => ({ ...prev, hour: nextHour }));
+                    setNewKol({
+                      ...newKol,
+                      fetch_policy: {
+                        ...newKol.fetch_policy,
+                        cron: buildWeeklyCron(addSchedule.weekday, nextHour),
+                      },
+                    });
+                  }}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10 px-3"
+                >
+                  {HOUR_OPTIONS.map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Classification Tags</label>
+              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Remark (Optional)</label>
               <Input
-                value={newKol.tags?.join(', ') || ''}
+                value={newKol.tags?.[0] || ''}
                 onChange={e => setNewKol({
                   ...newKol,
-                  tags: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                  tags: e.target.value.trim() ? [e.target.value.trim()] : []
                 })}
                 className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                placeholder="tag1, tag2"
+                placeholder="可选备注"
               />
             </div>
           </div>
