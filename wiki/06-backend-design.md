@@ -10,11 +10,11 @@
                              │ REST API
 ┌────────────────────────────▼────────────────────────────────────┐
 │                      Backend (Express.js)                        │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │  API Routes  │  │  Job Queue   │  │  LLM Service │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         │                  │                  │                  │
-│         ▼                  ▼                  ▼                  │
+│  ┌──────────────┐                    ┌──────────────┐          │
+│  │  API Routes  │                    │  LLM Service │          │
+│  └──────┬───────┘                    └──────┬───────┘          │
+│         │                                   │                  │
+│         ▼                                   ▼                  │
 │  ┌──────────────────────────────────────────────────┐           │
 │  │              Database (SQLite)                   │           │
 │  │  Tables: kols, videos, clips, jobs               │           │
@@ -57,12 +57,12 @@
 **输入：** KOL 的频道 URL（如 `youtube.com/@liziran`）+ 抓取策略（`fetch_policy`）
 
 **处理步骤：**
-1. 使用 **YouTube.js** (`youtubei.js`) 获取频道的最新视频列表
-2. 根据 `fetch_policy.max_videos` 限制抓取数量（如最多 20 个）
+1. 使用 **yt-dlp** 获取频道的最新视频列表（支持批量获取 JSON 元数据）
+2. 根据 `fetch_policy.max_videos` 限制抓取数量（默认 20 个）
 3. 对每个视频：
-   - 获取视频元数据：标题、时长、缩略图、发布日期
-   - 提取自动英文字幕（带时间戳）
-4. 过滤已处理过的视频（检查数据库中是否存在）
+   - 获取元数据：标题、时长、缩略图、发布日期
+   - 提取字幕：优先提取手动上传的英文字幕，若无则提取自动生成的字幕（`writeAutoSub: true`）
+4. 过滤已处理过的视频（检查数据库 `videos` 表）
 
 **输出：**
 ```json
@@ -72,11 +72,10 @@
       "videoId": "VIDEO_ID_1",
       "title": "AI的未来",
       "duration": 1234,
-      "thumbnail": "https://i.ytimg.com/vi/VIDEO_ID_1/maxresdefault.jpg",
+      "thumbnail": "...",
       "publishedAt": "2024-05-20T10:00:00Z",
       "subtitles": [
-        { "start": 0.0, "end": 3.5, "text": "Hello everyone" },
-        { "start": 3.5, "end": 7.2, "text": "Today we'll talk about AI" }
+        { "start": 0.0, "end": 3.5, "text": "Hello everyone" }
       ]
     }
   ]
@@ -84,103 +83,8 @@
 ```
 
 **依赖库：**
-- **推荐：** `youtubei.js` — YouTube 官方 InnerTube API 的 JavaScript 客户端
-  - 支持 Node.js、Deno、浏览器
-  - 无需 API Key，直接访问 YouTube 私有 API
-  - 可获取频道视频列表、视频信息、字幕、评论等
-  - GitHub: https://github.com/LuanRT/YouTube.js
-  - 文档: https://ytjs.dev
-
-**实现示例：**
-```ts
-import { Innertube } from 'youtubei.js';
-
-async function crawlChannel(channelUrl: string, maxVideos: number = 20) {
-  // 初始化 YouTube.js 客户端
-  const youtube = await Innertube.create();
-  
-  // 提取频道 ID 或 handle（如 @liziran）
-  const channelHandle = extractChannelHandle(channelUrl); // "@liziran"
-  
-  // 获取频道信息
-  const channel = await youtube.getChannel(channelHandle);
-  
-  // 获取频道的视频列表（按上传时间排序）
-  const videos = await channel.getVideos();
-  
-  // 限制数量并提取前 N 个视频
-  const videoList = videos.videos.slice(0, maxVideos);
-  
-  // 对每个视频提取详细信息和字幕
-  const results = [];
-  for (const video of videoList) {
-    try {
-      const info = await youtube.getInfo(video.id);
-      
-      // 获取字幕
-      const transcriptData = await info.getTranscript();
-      const subtitles = transcriptData?.transcript?.content?.body?.initial_segments.map(segment => ({
-        start: segment.start_ms / 1000,
-        end: segment.end_ms / 1000,
-        text: segment.snippet.text
-      })) || [];
-      
-      // 跳过无字幕的视频
-      if (subtitles.length === 0) {
-        console.log(`Skipping ${video.id}: No subtitles available`);
-        continue;
-      }
-      
-      results.push({
-        videoId: video.id,
-        title: info.basic_info.title,
-        duration: info.basic_info.duration,
-        thumbnail: info.basic_info.thumbnail?.[0]?.url,
-        publishedAt: info.basic_info.publish_date,
-        subtitles
-      });
-    } catch (error) {
-      console.error(`Failed to process video ${video.id}:`, error);
-    }
-  }
-  
-  return { videos: results };
-}
-```
-
----
-
-#### Stage 2: process（分段）
-
-**输入：** 字幕数组 + 视频元数据
-
-**处理步骤：**
-1. 将字幕按语义边界分段（每 30-60 秒一段，或按句子完整性）
-2. 合并过短的片段（< 15 秒）
-3. 为每段生成时间戳范围
-
-**输出：**
-```json
-{
-  "segments": [
-    {
-      "startSec": 0,
-      "endSec": 45,
-      "text": "Hello everyone. Today we'll talk about AI and its impact..."
-    },
-    {
-      "startSec": 45,
-      "endSec": 92,
-      "text": "The key challenge is understanding how models learn..."
-    }
-  ]
-}
-```
-
-**分段策略：**
-- 优先在句号、问号、感叹号处断句
-- 避免在句子中间切分
-- 目标长度：30-90 秒
+- **youtube-dl-exec** (`yt-dlp`) — 强大的视频下载与元数据提取工具
+- **FFmpeg** — 视频切片与合成的核心引擎
 
 ---
 
@@ -188,66 +92,31 @@ async function crawlChannel(channelUrl: string, maxVideos: number = 20) {
 
 **输入：** 分段后的文本片段
 
-**LLM 调用：** 使用 OpenAI Chat Completion API
+**LLM 调用：** 使用 OpenAI 兼容 API
 
-**Prompt 模板：**
-```
-你是一个视频内容分析专家。请分析以下视频片段的字幕文本，提取关键信息。
+**Fallback 机制：**
+为了保证流水线的稳定性，若 LLM API 调用失败（如 Token 过期、网络问题），系统会自动进入 **Fallback 模式**：
+- 标题：取原视频标题的前 50 个字符
+- 摘要：取片段文本的前 150 个字符
+- 关键词：使用 KOL 名称 + "Video" 作为默认标签
+- 分类：默认为 "analysis"
 
-视频标题：{videoTitle}
-KOL 名称：{kolName}
-片段文本：
-{segmentText}
+这样可以确保即使 AI 服务暂时不可用，用户依然能完成视频的下载和剪辑流程。
 
-请以 JSON 格式返回：
-{
-  "title": "片段的简短标题（10字以内）",
-  "summary": "内容摘要（50字以内）",
-  "keywords": ["关键词1", "关键词2", "关键词3"],
-  "topicCategory": "观点|分析|教程|其他"
-}
+---
 
-要求：
-- title 要吸引人，概括核心观点
-- summary 要准确提炼主要内容
-- keywords 提取 3-5 个语义关键词
-- topicCategory 从四个选项中选一个
-```
+## 视频处理逻辑
 
-**API 调用示例：**
-```ts
-const response = await fetch(process.env.OPENAI_BASE_URL + '/chat/completions', {
-  method: 'POST',
-  headers: {
-    'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
-    'Content-Type': 'application/json'
-  },
-  body: JSON.stringify({
-    model: process.env.OPENAI_MODEL,
-    messages: [
-      { role: 'system', content: '你是视频内容分析专家' },
-      { role: 'user', content: prompt }
-    ],
-    response_format: { type: 'json_object' },
-    temperature: 0.3
-  })
-});
-```
+### 1. 视频下载 (Downloader)
+使用 `yt-dlp` 下载最佳质量的视频流。下载后的文件存储在 `storage/videos/{videoId}.mp4`。
 
-**输出：**
-```json
-{
-  "clipId": "uuid-generated",
-  "videoId": "VIDEO_ID",
-  "kolName": "李自然",
-  "startSec": 45,
-  "endSec": 92,
-  "title": "AI 模型的学习机制",
-  "summary": "深入探讨了神经网络如何通过反向传播学习特征表示，以及梯度下降的优化过程。",
-  "keywords": ["神经网络", "反向传播", "梯度下降"],
-  "topicCategory": "分析"
-}
-```
+### 2. 片段切分 (FFmpeg)
+根据数据库中记录的 `start_sec` 和 `end_sec`，使用 FFmpeg 进行精确切分。
+- 策略：使用 `reencode`（重编码）以确保片段的时间戳和关键帧对齐。
+
+### 3. 视频合成 (Combine)
+将用户选中的多个片段路径写入 `concat.txt`，调用 FFmpeg 的 `concat` 协议进行合并。
+- 策略：同样使用 `reencode` 保证不同来源视频合并后的播放兼容性。
 
 ---
 
@@ -614,50 +483,6 @@ MAX_VIDEO_SIZE_MB=500
 
 ---
 
-## 任务队列设计
-
-使用 **Bull**（基于 Redis）或 **BullMQ** 管理后台任务：
-
-```ts
-import Queue from 'bull';
-
-const videoQueue = new Queue('video-processing', {
-  redis: { host: 'localhost', port: 6379 }
-});
-
-// 添加任务
-videoQueue.add('process-video', {
-  kolId: 1,
-  videoUrl: 'https://youtube.com/watch?v=...'
-});
-
-// 处理任务
-videoQueue.process('process-video', async (job) => {
-  const { kolId, videoUrl } = job.data;
-  
-  // Stage 1: crawl
-  job.progress(10);
-  const metadata = await crawlVideo(videoUrl);
-  
-  // Stage 2: process
-  job.progress(30);
-  const segments = await processSubtitles(metadata.subtitles);
-  
-  // Stage 3: clip
-  job.progress(60);
-  const clips = await analyzeWithLLM(segments);
-  
-  // Stage 4: index
-  job.progress(90);
-  await saveToDatabase(clips);
-  
-  job.progress(100);
-  return { success: true, clipsCount: clips.length };
-});
-```
-
----
-
 ## 定时任务设计
 
 ### Cron 调度器
@@ -686,12 +511,8 @@ export function startScheduler() {
       if (shouldRunNow(policy.cron, kol.last_run)) {
         console.log(`Triggering scheduled job for KOL: ${kol.name}`);
         
-        // 添加到任务队列
-        await videoQueue.add('crawl-channel', {
-          kolId: kol.id,
-          channelUrl: kol.channel_url,
-          maxVideos: policy.max_videos || 20
-        });
+        // 直接触发任务
+        await processJob(kol.id);
         
         // 更新最后执行时间
         await db.query(

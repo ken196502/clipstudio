@@ -107,6 +107,11 @@ async function processCrawlStage(jobId: number, kol: any): Promise<void> {
       if (!videoExists(video.videoId)) {
         saveVideo(video, kol.id);
         savedCount++;
+      } else {
+        // If video exists but maybe belongs to another "KOL" entry of the same channel
+        // update the kol_id to the current one so it gets processed
+        db.prepare('UPDATE videos SET kol_id = ? WHERE id = ?').run(kol.id, video.videoId);
+        savedCount++; // Count it as "new" for this job's processing purposes
       }
     }
 
@@ -241,6 +246,10 @@ async function processClipStage(jobId: number, kol: any): Promise<void> {
 
     updateJobProgress(jobId, 'clip', 'success', 100);
     console.log(`[Job ${jobId}] Clip stage completed: ${processedSegments} clips created`);
+
+    if (processedSegments === 0 && totalSegments > 0) {
+      throw new Error('Failed to generate any clips. Check LLM API configuration.');
+    }
   } catch (error) {
     updateJobProgress(jobId, 'clip', 'failed', 0, undefined, error instanceof Error ? error.message : 'Unknown error');
     throw error;

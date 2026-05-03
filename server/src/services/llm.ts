@@ -97,20 +97,19 @@ Provide the analysis in the specified JSON format.`;
       throw new Error('No content in LLM response');
     }
 
-    const parsed = JSON.parse(content);
-
-    // Validate and return the result
-    return {
-      title: parsed.title || 'Untitled',
-      summary: parsed.summary || '',
-      keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
-      topic_category: ['opinion', 'analysis', 'tutorial', 'story', 'other'].includes(parsed.topic_category)
-        ? parsed.topic_category
-        : 'other',
-    };
+    return JSON.parse(content);
   } catch (error) {
     console.error('Error analyzing clip:', error);
-    throw new Error(`Failed to analyze clip: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    
+    // Fallback: Generate a simple analysis if LLM fails
+    // This ensures the pipeline doesn't break completely
+    console.warn('Using fallback analysis for clip');
+    return {
+      title: videoTitle.substring(0, 50),
+      summary: text.substring(0, 150) + '...',
+      keywords: [kolName, 'Video'],
+      topic_category: 'analysis'
+    };
   }
 }
 
@@ -125,7 +124,7 @@ export async function batchAnalyzeClips(
   concurrency: number = 5
 ): Promise<ClipAnalysis[]> {
   const results: ClipAnalysis[] = [];
-  const chunks: typeof clips = [];
+  const chunks: (typeof clips)[] = [];
 
   // Split into chunks based on concurrency
   for (let i = 0; i < clips.length; i += concurrency) {

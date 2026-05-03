@@ -1,7 +1,7 @@
 import cron from 'node-cron';
 import cronParser from 'cron-parser';
 import { db } from '../db/init';
-import { addCrawlJob } from './queue';
+import { processJob } from './job-processor';
 
 let schedulerTask: cron.ScheduledTask | null = null;
 
@@ -46,8 +46,18 @@ async function checkAndTriggerJobs(): Promise<void> {
         if (shouldRunNow(cronExpression)) {
           console.log(`[Scheduler] Triggering job for KOL: ${kol.name}`);
 
-          // Add job to queue
-          await addCrawlJob(kol.id);
+          // Create a job entry
+          const result = db.prepare(`
+            INSERT INTO jobs (kol_id, status, stage, progress, started_at)
+            VALUES (?, 'running', 'crawl', 0, ?)
+          `).run(kol.id, new Date().toISOString());
+
+          const jobId = result.lastInsertRowid as number;
+
+          // Process the job in background
+          processJob(jobId).catch(error => {
+            console.error(`[Scheduler] Error processing job ${jobId}:`, error);
+          });
 
           // Update last_run
           db.prepare('UPDATE kols SET last_run = ? WHERE id = ?')

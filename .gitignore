@@ -8,3 +8,33 @@ coverage/
 !.env.example
 *.mp4
 *.jpg
+
+# Video files
+*.webm
+*.mov
+*.avi
+*.mkv
+*.flv
+*.wmv
+
+# Test directories and files
+src/test/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+__tests__/
+
+# Data directories
+data/
+server/data/
+server/storage/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Temporary files
+server/temp-*
+*.tmp

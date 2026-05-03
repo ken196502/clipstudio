@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { Clip, SearchRequest, SearchResponse } from '../types';
 import { AppError, asyncHandler } from '../middleware/error-handler';
@@ -6,7 +6,7 @@ import { AppError, asyncHandler } from '../middleware/error-handler';
 const router = express.Router();
 
 // GET /api/clips - Get all clips (with optional filters)
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const { kolName, category, sort = 'newest', limit = 50, offset = 0 } = req.query;
 
   let query = 'SELECT * FROM clips WHERE 1=1';
@@ -58,8 +58,8 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/clips/:id - Get clip by ID
-router.get('/:id', asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id);
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
 
   const row = db.prepare('SELECT * FROM clips WHERE id = ?').get(id) as any;
 
@@ -85,7 +85,7 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/clips/search - Search clips (keyword matching)
-router.post('/search', asyncHandler(async (req, res) => {
+router.post('/search', asyncHandler(async (req: Request, res: Response) => {
   const { query, limit = 10 } = req.body as SearchRequest;
 
   if (!query || !query.trim()) {

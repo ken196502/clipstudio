@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { KOL, CreateKOLRequest, UpdateKOLRequest } from '../types';
 import { processJob } from '../services/job-processor';
@@ -7,7 +7,7 @@ import { AppError, asyncHandler } from '../middleware/error-handler';
 const router = express.Router();
 
 // GET /api/kols - Get all KOLs
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const rows = db.prepare('SELECT * FROM kols ORDER BY created_at DESC').all() as any[];
 
   const kols: KOL[] = rows.map(row => ({
@@ -27,7 +27,7 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/kols - Create new KOL
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { name, channel_url, tags = [], fetch_policy = {}, active = 1 } = req.body as CreateKOLRequest;
 
   if (!name || !channel_url) {
@@ -61,8 +61,8 @@ router.post('/', asyncHandler(async (req, res) => {
 }));
 
 // PATCH /api/kols/:id - Update KOL
-router.patch('/:id', asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id);
+router.patch('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
   const updates: UpdateKOLRequest = req.body;
 
   const existing = db.prepare('SELECT * FROM kols WHERE id = ?').get(id) as any;
@@ -99,8 +99,12 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   }
 
   values.push(id);
-  const query = `UPDATE kols SET ${updatesArray.join(', ')} WHERE id = ?`;
-  db.prepare(query).run(...values);
+
+  db.prepare(`
+    UPDATE kols
+    SET ${updatesArray.join(', ')}
+    WHERE id = ?
+  `).run(...values);
 
   const updated = db.prepare('SELECT * FROM kols WHERE id = ?').get(id) as any;
 
@@ -118,38 +122,44 @@ router.patch('/:id', asyncHandler(async (req, res) => {
   });
 }));
 
-// POST /api/kols/:id/trigger - Trigger manual job
-router.post('/:id/trigger', asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id);
+// DELETE /api/kols/:id - Delete KOL
+router.delete('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
+
+  const result = db.prepare('DELETE FROM kols WHERE id = ?').run(id);
+
+  if (result.changes === 0) {
+    throw new AppError(404, 'KOL not found');
+  }
+
+  res.json({ message: 'KOL deleted successfully' });
+}));
+
+// POST /api/kols/:id/trigger - Manually trigger a job for a KOL
+router.post('/:id/trigger', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
 
   const kol = db.prepare('SELECT * FROM kols WHERE id = ?').get(id) as any;
   if (!kol) {
     throw new AppError(404, 'KOL not found');
   }
 
-  if (kol.active !== 1) {
-    throw new AppError(400, 'KOL is not active');
-  }
-
-  // Create a new job
+  // Create a job entry
   const result = db.prepare(`
-    INSERT INTO jobs (kol_id, stage, status, progress, started_at)
-    VALUES (?, 'crawl', 'running', 0, ?)
+    INSERT INTO jobs (kol_id, status, stage, progress, started_at)
+    VALUES (?, 'running', 'crawl', 0, ?)
   `).run(id, new Date().toISOString());
 
-  // Update last_run
-  db.prepare('UPDATE kols SET last_run = ? WHERE id = ?').run(new Date().toISOString(), id);
-
-  // Start processing the job asynchronously
   const jobId = result.lastInsertRowid as number;
+
+  // Start processing in background
   processJob(jobId).catch(error => {
-    console.error(`Failed to process job ${jobId}:`, error);
+    console.error(`Error processing job ${jobId}:`, error);
   });
 
   res.json({
-    jobId: result.lastInsertRowid,
-    status: 'running',
-    message: 'Job started successfully'
+    message: 'Job triggered successfully',
+    jobId
   });
 }));
 

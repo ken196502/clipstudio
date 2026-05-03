@@ -33,7 +33,9 @@ export interface VideoInfo {
  * Get temp directory for processing
  */
 function getTempDir(): string {
-  const tempDir = path.join(process.cwd(), 'storage', 'temp');
+  const storagePath = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage');
+  const storageDir = path.isAbsolute(storagePath) ? storagePath : path.resolve(process.cwd(), storagePath);
+  const tempDir = path.join(storageDir, 'temp');
 
   // Create directory if it doesn't exist
   if (!fs.existsSync(tempDir)) {
@@ -47,7 +49,9 @@ function getTempDir(): string {
  * Get output directory for combined videos
  */
 function getOutputDir(): string {
-  const outputDir = path.join(process.cwd(), 'storage', 'output');
+  const storagePath = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage');
+  const storageDir = path.isAbsolute(storagePath) ? storagePath : path.resolve(process.cwd(), storagePath);
+  const outputDir = path.join(storageDir, 'output');
 
   // Create directory if it doesn't exist
   if (!fs.existsSync(outputDir)) {

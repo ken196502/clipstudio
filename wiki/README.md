@@ -57,98 +57,58 @@ Asset Library（片段库）
 #### 3. 处理流水线（4 个 Stage）
 
 **Stage 1: crawl（抓取）**
-- 使用 YouTube.js 获取频道最新视频列表
+- 使用 **yt-dlp** 获取频道最新视频列表
 - 提取视频元数据：标题、时长、缩略图、发布日期
-- 提取自动英文字幕（带时间戳）
+- 提取字幕（优先手动，其次自动生成）
 - 过滤已处理过的视频
 
 **Stage 2: process（分段）**
 - 将字幕按语义边界分段
 - 目标长度：30-90 秒
-- 在句子边界断句，避免在句子中间切分
-- 合并过短片段（< 15 秒）
+- 自动处理 VTT 格式
 
 **Stage 3: clip（AI 分析）**
-- 使用 OpenAI Chat Completion API
-- 为每个片段生成：
-  - 标题（10 字以内）
-  - 摘要（50 字以内）
-  - 关键词（3-5 个）
-  - 话题分类（观点/分析/教程）
+- 使用 OpenAI 兼容 API
+- 为每个片段生成标题、摘要、关键词及分类
+- **内置 Fallback 模式**：API 异常时自动生成占位数据
 
 **Stage 4: index（入库）**
-- 保存到数据库
-- 生成语义向量（可选）
-- 更新任务状态为 success
+- 保存到 SQLite 数据库
+- 更新任务状态
 
 #### 4. 搜索与组合
-- **语义搜索**：通过自然语言查询相关片段
-- **Lucky Combo**：AI 根据 Prompt 自动挑选并组合片段
-- **视频合成**：拖拽排序片段，FFmpeg 合成新视频
+- **关键词搜索**：通过相关度评分检索片段
+- **Lucky Combo**：基于 Prompt 自动挑选 Top 5 片段
+- **视频合成**：使用 FFmpeg 精确剪辑并重编码合成
 
 ---
 
 ## 🚀 快速启动
 
-### 前端（当前可用）
+### 启动全栈服务
 
 ```bash
-# 1. 安装依赖
+# 1. 安装项目根目录依赖
 npm install
 
-# 2. 配置环境变量
-cp .env.example .env.local
-# 编辑 .env.local，填入 OpenAI 配置
-
-# 3. 启动开发服务器
-npm run dev
-# 访问 http://localhost:3000
-```
-
-### 后端（待实现）
-
-```bash
-# 1. 进入后端目录
+# 2. 进入后端目录并安装依赖
 cd server
-
-# 2. 安装依赖
 npm install
 
-# 3. 初始化数据库
+# 3. 初始化数据库（可选，dev 模式会自动初始化）
 npm run db:init
 
-# 4. 启动后端服务
-npm run dev
-# API 运行在 http://localhost:3001
+# 4. 同时启动前后端（在根目录执行）
+npm run dev:all  # 如果 package.json 配置了 concurrently
+# 或者分别在两个终端启动：
+# 终端 1 (前端): npm run dev
+# 终端 2 (后端): cd server && npm run dev
 ```
 
 **系统依赖：**
 - Node.js 18+
-- FFmpeg（视频处理）
-- yt-dlp（YouTube 下载）
-
-**环境变量配置：**
-```bash
-# OpenAI API 配置
-OPENAI_BASE_URL="https://api.openai.com/v1"
-OPENAI_API_KEY="sk-your-api-key"
-OPENAI_MODEL="gpt-4o-mini"
-
-# 数据库（SQLite）
-DATABASE_URL="./data/engine_vec.db"
-
-# 服务器
-PORT=3001
-NODE_ENV="development"
-
-# 文件存储
-STORAGE_PATH="./storage"
-MAX_VIDEO_SIZE_MB=500
-
-# 定时任务
-ENABLE_SCHEDULER=true
-SCHEDULER_CHECK_INTERVAL="* * * * *"
-```
+- **FFmpeg**：核心视频处理引擎
+- **yt-dlp**：YouTube 抓取工具（需确保在 PATH 中）
 
 ---
 
@@ -156,11 +116,11 @@ SCHEDULER_CHECK_INTERVAL="* * * * *"
 
 | 模块 | 路由 key | 前端状态 | 后端状态 |
 |------|----------|----------|----------|
-| Synaptic Search | `search` | ✅ UI 完成 | ❌ 待实现 API |
-| Target Entities | `kol` | ✅ UI 完成 | ❌ 待实现 CRUD |
-| Process Monitor | `task` | ✅ UI 完成 | ❌ 待实现队列 |
-| Asset Library | `clip` | ✅ UI 完成 | ❌ 待实现存储 |
-| Asset Combiner | `combine` | ✅ UI 完成 | ❌ 待实现合成 |
+| Synaptic Search | `search` | ✅ 已完成 | ✅ 已完成 |
+| Target Entities | `kol` | ✅ 已完成 | ✅ 已完成 |
+| Process Monitor | `task` | ✅ 已完成 | ✅ 已完成 |
+| Asset Library | `clip` | ✅ 已完成 | ✅ 已完成 |
+| Asset Combiner | `combine` | ✅ 已完成 | ✅ 已完成 |
 
 ---
 
@@ -171,14 +131,12 @@ SCHEDULER_CHECK_INTERVAL="* * * * *"
 - **构建：** Vite 6
 - **样式：** Tailwind CSS 4
 - **状态：** Zustand
-- **动画：** Framer Motion
-- **UI 组件：** shadcn/ui + Radix UI
 
-### 后端（待实现）
-- **框架：** Express.js + TypeScript
-- **数据库：** SQLite（开发）/ PostgreSQL（生产）
-- **任务队列：** Bull + Redis
-- **LLM：** OpenAI Chat Completion API（支持自定义 baseURL）
+### 后端（已完成）
+- **框架：** Express.js + tsx
+- **数据库：** SQLite (WAL mode)
+- **任务处理：** 异步 Promise (移除 Redis 依赖)
+- **LLM：** OpenAI API (带 Fallback)
 - **视频处理：** yt-dlp + FFmpeg
 
 ---
@@ -195,14 +153,13 @@ SCHEDULER_CHECK_INTERVAL="* * * * *"
 
 ## 📋 开发状态
 
-### ✅ 已完成（前端）
-- [x] 前端 5 个页面 UI
-- [x] Zustand 状态管理 + Mock 数据
-- [x] 完整的视觉设计系统
-- [x] 页面切换动画
-- [x] Lucky Combo 动画序列
-- [x] 拖拽排序时间轴
-- [x] 完整的 Wiki 文档（8 个文档）
+### ✅ 已完成（全栈）
+- [x] 前端 5 个页面 UI 及交互
+- [x] 后端 REST API 与 SQLite 持久化
+- [x] YouTube 字幕提取流水线
+- [x] LLM 语义分析与 Fallback 机制
+- [x] FFmpeg 视频精确剪辑与合成
+- [x] 全流程 API 自动化验证脚本
 
 ### 🚧 进行中
 - [ ] 本地开发流程验证

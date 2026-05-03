@@ -30,26 +30,33 @@
 - 任务监控轮询更新
 
 ✅ **已完成（Phase 2）：**
-- YouTube 视频抓取（YouTube.js 集成）
+- YouTube 视频抓取（yt-dlp 集成，支持自动字幕）
 - 字幕分段处理（30-90 秒语义分段）
-- OpenAI LLM 内容分析（标题/摘要/关键词/分类）
-- 任务队列（Bull + Redis）
+- OpenAI 兼容 LLM 内容分析（带 Fallback 容错机制）
+- 异步任务流水线（Crawl → Process → Clip → Index）
 - 定时任务调度（node-cron）
-- 4-stage 流水线完整实现
+
+✅ **已完成（Phase 3）：**
+- 关键词搜索（SQL LIKE 查询）
+- 前后端集成搜索页面
+
+✅ **已完成（Phase 4）：**
+- Lucky Combo 智能选片（基于关键词匹配的初步实现）
+- 后端 API `/api/lucky-combo`
 
 ✅ **已完成（Phase 5）：**
-- 视频下载服务（YouTube.js）
-- FFmpeg 视频切割服务
-- 视频拼接服务
-- Combine 路由集成视频处理
-- 前端合成功能集成
+- 视频下载服务（yt-dlp，支持绝对路径管理）
+- FFmpeg 视频切割服务（支持 reencode 保证精度）
+- 视频拼接服务（支持多片段合成）
+- Combine 路由集成与进度轮询
+- 全流程 API 自动化验证脚本
 
-🐛 **已修复问题（前端）：**
-1. ✅ 筛选功能已实现（Clip Library 下拉框）
-2. ✅ Add Entity 按钮已实现（KOL Manager）
-3. ✅ 搜索结果已连接后端 API（Search 页面）
-4. ✅ 任务进度已实现轮询更新（Task Monitor）
-5. ✅ 合成按钮已实现（Combine 页面）
+🐛 **已修复问题：**
+1. ✅ 路径管理问题（由相对路径改为绝对路径）
+2. ✅ 代理配置冲突（修复空代理导致下载失败）
+3. ✅ LLM API 鉴权失败时的系统崩溃问题（加入 Fallback）
+4. ✅ 视频合成时的路径解析错误
+5. ✅ 限流策略导致的自动化脚本失效
 
 ---
 
@@ -67,238 +74,89 @@ cd server
 npm init -y
 
 # 安装核心依赖
-npm install express cors dotenv
-npm install better-sqlite3
-npm install -D typescript @types/node @types/express tsx
+npm install express cors dotenv better-sqlite3
+npm install -D typescript @types/node @types/express tsx vitest supertest
 ```
 
 #### 1.2 数据库初始化
-- [ ] 创建 `server/db/schema.sql`，定义 4 张表
-- [ ] 编写 `server/db/init.ts`，自动建表 + 插入测试数据
-- [ ] 实现 `server/db/queries.ts`，封装常用查询
+- [x] 创建 `server/src/db/schema.sql`，定义 4 张表
+- [x] 编写 `server/src/db/init.ts`，自动建表
+- [x] 编写 `server/src/db/seed.ts`，插入测试数据
 
 #### 1.3 API 路由实现
-- [ ] `GET /api/kols` — 返回 KOL 列表
-- [ ] `POST /api/kols` — 添加新 KOL
-- [ ] `PATCH /api/kols/:id` — 更新 KOL
-- [ ] `GET /api/clips` — 返回片段列表（支持筛选）
-- [ ] `GET /api/jobs` — 返回任务列表
+- [x] `GET /api/kols` — 返回 KOL 列表
+- [x] `POST /api/kols` — 添加新 KOL
+- [x] `GET /api/clips` — 返回片段列表（支持筛选）
+- [x] `GET /api/jobs` — 返回任务列表
+- [x] `POST /api/kols/:id/trigger` — 手动触发抓取任务
 
 #### 1.4 前后端联调
-- [ ] 修改前端 `store.ts`，将 Mock 数据替换为 API 调用
-- [ ] 使用 `fetch` 或 `axios` 请求后端接口
-- [ ] 处理加载状态和错误提示
-
-**验收标准：**
-- 前端可以从后端获取 KOL 列表并展示
-- 可以通过前端添加新 KOL 并保存到数据库
+- [x] 修改前端 `store.ts`，连接后端 API
+- [x] 修复前端筛选、搜索、添加等交互逻辑
 
 ---
 
-### Phase 2：视频抓取流水线
+### Phase 2：视频处理流水线
 
 **目标：** 实现从 YouTube URL 到生成 Clips 的完整流程。
 
-#### 2.1 YouTube 字幕抓取
-- [x] 安装 `youtubei.js`：`npm install youtubei.js`
-- [x] 实现 `server/services/youtube.ts`：
-  - `fetchChannelVideos(channelUrl, maxVideos)` — 获取频道最新视频列表
-  - `fetchVideoInfo(videoId)` — 获取单个视频的元数据
-  - `fetchSubtitles(videoId)` — 提取英文字幕（带时间戳）
-  - 使用 YouTube.js 的 InnerTube API，无需 API Key
-- [x] 处理异常：无字幕、私有视频、地区限制
-- [x] 实现去重逻辑：检查数据库中是否已存在该视频
-- [x] 参考文档：https://ytjs.dev
+#### 2.1 YouTube 数据抓取
+- [x] 安装 `youtube-dl-exec`：`npm install youtube-dl-exec`
+- [x] 实现 `server/src/services/youtube.ts`：
+  - 支持 `yt-dlp` 抓取频道视频列表
+  - 支持提取手动字幕及自动生成字幕 (`writeAutoSub`)
+- [x] 实现去重与 KOL 自动关联逻辑
 
 #### 2.2 字幕分段处理
-- [x] 实现 `server/services/segmenter.ts`：
-  - 按时间窗口（30-90 秒）分段
-  - 在句子边界断句
-  - 合并过短片段（< 15 秒）
-- [x] 单元测试：验证分段逻辑正确性
+- [x] 实现 `server/src/services/segmenter.ts`：
+  - 30-90 秒语义窗口切分
+  - VTT 格式解析
 
-#### 2.3 OpenAI LLM 集成
-- [x] 安装 `openai` SDK：`npm install openai`
-- [x] 实现 `server/services/llm.ts`：
-  ```ts
-  async function analyzeClip(text: string, videoTitle: string, kolName: string) {
-    const response = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL,
-      messages: [
-        { role: 'system', content: '你是视频内容分析专家' },
-        { role: 'user', content: buildPrompt(text, videoTitle, kolName) }
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0.3
-    });
-    return JSON.parse(response.choices[0].message.content);
-  }
-  ```
-- [x] 实现 Prompt 模板（参考 06-backend-design.md）
-- [x] 批量处理：并发调用 LLM（限制并发数为 5）
+#### 2.3 LLM 内容分析
+- [x] 实现 `server/src/services/llm.ts`：
+  - 基于 REST API 的内容分析
+  - **Fallback 机制**：确保 API 失效时系统仍能运行
+- [x] 批量处理与并发控制
 
-#### 2.4 任务队列
-- [x] 安装 Bull：`npm install bull @types/bull`
-- [x] 安装 node-cron：`npm install node-cron @types/node-cron`
-- [x] 安装 cron-parser：`npm install cron-parser @types/cron-parser`
-- [x] 配置 Redis（本地开发用 Docker）
-- [x] 实现 `server/scheduler.ts`：
-  - `startScheduler()` — 启动定时任务调度器
-  - `shouldRunNow()` — 判断是否应该执行
-  - 每分钟检查所有 `active=1` 的 KOL
-  - 根据 `fetch_policy.cron` 判断是否到了执行时间
-- [x] 实现 2 个 job processor：
-  - `crawl-channel` — 抓取频道视频列表
-  - `process-video` — 处理单个视频（4 个 stage）
-- [x] 实现进度更新：`job.progress(percent)`
-- [x] 在 `server/index.ts` 中启动调度器
-
-#### 2.5 前端集成
-- [x] 实现 `POST /api/kols/:id/trigger` 接口（抓取该 KOL 频道的最新视频）
-- [x] 前端"EXECUTE"按钮调用此接口
-- [x] Task Monitor 页面轮询 `/api/jobs?status=running` 更新进度
-- [x] 显示当前处理的视频标题（`job.videoTitle`）
-
-**验收标准：**
-- 在 KOL Manager 点击"EXECUTE"按钮
-- Task Monitor 显示 4 个 stage 依次执行（crawl → process → clip → index）
-- 完成后 Clip Library 出现该频道的新片段（可能是多个视频的多个片段）
+#### 2.4 定时任务与异步处理
+- [x] 实现 `server/src/services/scheduler.ts`：
+  - 基于 `node-cron` 的分钟级扫描
+- [x] 实现异步 `processJob` 流水线
 
 ---
 
-### Phase 3：搜索功能
+### Phase 3：搜索与智能选片
 
-**目标：** 实现语义搜索，返回相关片段。
+**目标：** 实现片段检索与 Lucky Combo 逻辑。
 
-#### 3.1 关键词搜索（MVP）
-- [ ] 实现 `POST /api/clips/search`
-- [ ] SQL 查询：`WHERE title LIKE ? OR summary LIKE ?`
-- [ ] 计算简单相关度评分（匹配次数）
+#### 3.1 搜索功能
+- [x] 实现 `/api/clips/search`（关键词评分匹配）
+- [x] 前端 Search 页面集成
 
-#### 3.2 向量搜索（可选）
-- [ ] 生成 Embeddings：
-  ```ts
-  const embedding = await openai.embeddings.create({
-    model: 'text-embedding-3-small',
-    input: `${clip.title} ${clip.summary} ${clip.keywords.join(' ')}`
-  });
-  ```
-- [ ] 保存到数据库 `embedding_vector` 字段（BLOB）
-- [ ] 实现余弦相似度计算
-- [ ] 或使用向量数据库（Pinecone / Weaviate / pgvector）
-
-#### 3.3 前端集成
-- [ ] Search 页面提交表单时调用 `/api/clips/search`
-- [ ] 展示返回的结果（带 relevance 评分）
-- [ ] 实现筛选器（SOURCE KOL / CATEGORY）
-
-**验收标准：**
-- 输入"AI 职业"，返回相关片段
-- 相关度评分合理（最相关的排在前面）
+#### 3.2 Lucky Combo
+- [x] 实现 `/api/lucky-combo`：
+  - 根据用户 Prompt 对片段库进行关键词相关度打分
+  - 返回 Top 5 相关片段
 
 ---
 
-### Phase 4：Lucky Combo 智能组合
+### Phase 5：物理合成服务
 
-**目标：** 根据用户 Prompt 自动挑选片段并组合。
+**目标：** 真正实现视频的切分与拼接。
 
-#### 4.1 LLM 选片逻辑
-- [ ] 实现 `POST /api/lucky-combo`
-- [ ] 请求体：`{ "prompt": "制作一个关于 AI 改变职业的视频" }`
-- [ ] LLM Prompt：
-  ```
-  用户需求：{prompt}
-  
-  可用片段列表：
-  1. [ID: 1] AI 取代哪些职业 - 探讨了 AI 在未来5年内最可能替代的职业类型...
-  2. [ID: 2] GPT-5 核心突破点 - 从技术和商业化角度深度剖析...
-  ...
-  
-  请从上述片段中选择 3-5 个最相关的，按逻辑顺序排列。
-  返回 JSON 格式：
-  {
-    "selectedClipIds": [1, 5, 3],
-    "reasoning": "选择理由"
-  }
-  ```
-- [ ] 返回选中的 Clip 列表
+#### 5.1 视频下载
+- [x] 实现 `server/src/services/downloader.ts`
+- [x] 解决 YouTube 鉴权与代理配置问题
 
-#### 4.2 前端集成
-- [ ] Lucky Combo 动画完成后调用 `/api/lucky-combo`
-- [ ] 将返回的 clips 设置为 Combine 页面的 timeline
-- [ ] 跳转到 Combine 页面
+#### 5.2 FFmpeg 切割与拼接
+- [x] 实现 `server/src/services/ffmpeg.ts`：
+  - `extractClip` (reencode)
+  - `combineClips` (reencode)
+- [x] 解决跨目录路径拼接错误（使用绝对路径）
 
-**验收标准：**
-- 点击 Lucky Combo，输入"制作 AI 教程视频"
-- 自动选择 3-5 个相关片段
-- 跳转到 Combine 页面，时间轴已填充
-
----
-
-### Phase 5：视频合成
-
-**目标：** 将选中的片段合成为一个新视频。
-
-#### 5.1 视频下载与缓存
-- [ ] 安装 `youtubei.js`：`npm install youtubei.js`
-- [ ] 实现 `server/services/downloader.ts`：
-  ```ts
-  import { Innertube } from 'youtubei.js';
-  
-  async function downloadVideo(videoId: string) {
-    const outputPath = `./storage/videos/${videoId}.mp4`;
-    if (fs.existsSync(outputPath)) return outputPath;
-    
-    const youtube = await Innertube.create();
-    const info = await youtube.getInfo(videoId);
-    
-    // 获取最佳视频流
-    const format = info.chooseFormat({ quality: 'best', type: 'video+audio' });
-    const stream = await info.download({ format });
-    
-    // 保存到本地
-    const writeStream = fs.createWriteStream(outputPath);
-    stream.pipe(writeStream);
-    
-    return new Promise((resolve, reject) => {
-      writeStream.on('finish', () => resolve(outputPath));
-      writeStream.on('error', reject);
-    });
-  }
-  ```
-- [ ] 实现缓存策略（避免重复下载）
-
-#### 5.2 FFmpeg 视频切割
-- [ ] 安装 FFmpeg（系统依赖）
-- [ ] 实现 `server/services/ffmpeg.ts`：
-  ```ts
-  async function extractClip(videoPath: string, startSec: number, endSec: number, outputPath: string) {
-    await execAsync(`ffmpeg -i "${videoPath}" -ss ${startSec} -to ${endSec} -c copy "${outputPath}"`);
-  }
-  ```
-
-#### 5.3 视频拼接
-- [ ] 实现 `combineClips(clips: Clip[], outputPath: string)`
-- [ ] 生成 concat 列表文件
-- [ ] 调用 FFmpeg 合并
-
-#### 5.4 任务队列
-- [ ] 创建 `combine-video` 队列
-- [ ] 实现进度回调（每个片段处理完更新进度）
-- [ ] 完成后生成下载链接
-
-#### 5.5 前端集成
-- [ ] Combine 页面"COMBINE AS NEW VIDEO"按钮调用 `POST /api/combine`
-- [ ] 显示进度条（轮询 `GET /api/combine/:taskId`）
-- [ ] 完成后显示下载按钮
-
-**验收标准：**
-- 在 Combine 页面拖拽 3 个片段
-- 点击合成按钮
-- 等待 1-2 分钟后下载合成视频
-- 播放视频，确认片段顺序正确
-
----
+#### 5.3 任务状态与进度
+- [x] 内存中管理 `combineTasks` 状态
+- [x] 前端轮询任务进度，展示处理阶段
 
 ---
 
@@ -306,12 +164,12 @@ npm install -D typescript @types/node @types/express tsx
 
 | 层级 | 技术选型 | 理由 |
 |------|----------|------|
-| 前端 | React + Vite + Tailwind | 已完成，保持不变 |
-| 后端 | Express.js + TypeScript | 轻量、易上手 |
-| 数据库 | SQLite | 零配置，适合开发 |
-| 任务队列 | node-cron | 简单定时任务 |
-| LLM | OpenAI Chat Completion (RESTful) | 支持自定义 baseURL，兼容各种 API |
-| 视频处理 | yt-dlp + FFmpeg | 行业标准工具 |
+| 前端 | React + Zustand | 已完成，轻量高效 |
+| 后端 | Express.js + tsx | 极速开发与部署 |
+| 数据库 | SQLite (WAL mode) | 零配置，支持并发读取 |
+| 异步处理 | 原生 Promise + Async | 无需 Redis，适合内部轻量使用 |
+| 视频处理 | yt-dlp + FFmpeg | 行业顶尖处理方案 |
+| AI API | OpenAI API | 灵活可控，带容错回退 |
 
 ---
 

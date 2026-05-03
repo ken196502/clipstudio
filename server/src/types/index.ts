@@ -66,6 +66,7 @@ export interface CreateKOLRequest {
     cron?: string;
     max_videos?: number;
   };
+  active?: number;
 }
 
 export interface UpdateKOLRequest {

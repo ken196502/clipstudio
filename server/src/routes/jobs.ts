@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { Job } from '../types';
 import { AppError, asyncHandler } from '../middleware/error-handler';
@@ -6,7 +6,7 @@ import { AppError, asyncHandler } from '../middleware/error-handler';
 const router = express.Router();
 
 // GET /api/jobs - Get all jobs (with optional status filter)
-router.get('/', asyncHandler(async (req, res) => {
+router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const { status } = req.query;
 
   let query = 'SELECT * FROM jobs ORDER BY started_at DESC';
@@ -35,8 +35,8 @@ router.get('/', asyncHandler(async (req, res) => {
 }));
 
 // GET /api/jobs/:id - Get job by ID
-router.get('/:id', asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id);
+router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
 
   const row = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as any;
 
@@ -60,8 +60,8 @@ router.get('/:id', asyncHandler(async (req, res) => {
 }));
 
 // POST /api/jobs/:id/retry - Retry failed job
-router.post('/:id/retry', asyncHandler(async (req, res) => {
-  const id = parseInt(req.params.id);
+router.post('/:id/retry', asyncHandler(async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string);
 
   const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) as any;
   if (!job) {

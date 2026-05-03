@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",
+    "test": "NODE_ENV=test vitest run",
     "db:init": "tsx src/db/init.ts",
     "db:seed": "tsx src/db/seed.ts"
   },
@@ -20,14 +21,13 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "axios": "^1.16.0",
     "better-sqlite3": "^11.8.1",
-    "bull": "^4.16.5",
     "cors": "^2.8.5",
     "cron-parser": "^4.9.0",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "express-rate-limit": "^8.4.1",
-    "ioredis": "^5.6.0",
     "node-cron": "^3.0.3",
     "node-fetch": "2.7.0",
     "openai": "^4.80.1",
@@ -40,13 +40,15 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/bull": "^4.10.4",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.2",
     "@types/node-cron": "^3.0.11",
+    "@types/supertest": "^6.0.2",
     "@types/uuid": "^10.0.0",
+    "supertest": "^7.0.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.8.3"
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }

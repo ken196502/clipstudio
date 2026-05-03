@@ -113,37 +113,39 @@
 
 ---
 
-## 🔌 API 接口速查（待实现）
+## 🔌 API 接口速查
 
 ### KOL 管理
 ```
 GET    /api/kols              # 获取列表
-POST   /api/kols              # 添加新 KOL
+POST   /api/kols              # 添加新 KOL (带去重逻辑)
 PATCH  /api/kols/:id          # 更新配置
-POST   /api/kols/:id/trigger  # 手动触发任务
+DELETE /api/kols/:id          # 删除 KOL
+POST   /api/kols/:id/trigger  # 手动异步触发流水线任务
 ```
 
 ### 任务管理
 ```
-GET    /api/jobs?status=running  # 获取任务列表
+GET    /api/jobs?status=running  # 获取任务列表 (Crawl->Process->Clip->Index)
+GET    /api/jobs/:id             # 查询单个任务详情
 POST   /api/jobs/:id/retry       # 重试失败任务
 ```
 
 ### 片段管理
 ```
 GET    /api/clips?kolName=xxx&category=xxx  # 获取片段列表
-POST   /api/clips/search                    # 语义搜索
+POST   /api/clips/search                    # 关键词相关度评分搜索
 ```
 
 ### 视频合成
 ```
-POST   /api/combine           # 提交合成任务
-GET    /api/combine/:taskId   # 查询进度
+POST   /api/combine           # 提交合成任务 (异步下载+剪辑+拼接)
+GET    /api/combine/:taskId   # 查询合成进度及结果
 ```
 
 ### Lucky Combo
 ```
-POST   /api/lucky-combo       # 智能选片
+POST   /api/lucky-combo       # 智能选片 (基于关键词评分)
 Body: { "prompt": "制作 AI 教程视频" }
 ```
 
@@ -151,35 +153,33 @@ Body: { "prompt": "制作 AI 教程视频" }
 
 ## 🛠️ 常用命令速查
 
-### 前端
+### 全栈启动
 ```bash
-npm run dev      # 启动开发服务器（localhost:3000）
-npm run build    # 生产构建
-npm run preview  # 预览生产构建
-npm run lint     # TypeScript 类型检查
+# 前端 (localhost:3002)
+npm run dev
+
+# 后端 (localhost:3001)
+cd server && npm run dev
 ```
 
-### 后端（待实现）
+### 后端开发
 ```bash
 cd server
-npm run dev      # 启动后端服务（localhost:3001）
-npm run db:init  # 初始化数据库
-npm run db:seed  # 填充测试数据
+npm run db:init  # 初始化 SQLite 数据库
+npm run db:seed  # 填充测试数据 (李自然/硅谷徐)
+npm test         # 运行后端 API 集成测试
 ```
 
-### 视频处理
+### 视频验证
 ```bash
-# 下载 YouTube 视频
-yt-dlp -f best "https://youtube.com/watch?v=VIDEO_ID" -o "video.mp4"
+# 使用 npx tsx 运行验证脚本
+npx tsx src/verify-api-flow.ts
+```
 
-# 提取字幕
-yt-dlp --write-auto-sub --sub-lang en --skip-download "URL"
-
-# 切割视频片段
-ffmpeg -i video.mp4 -ss 00:01:30 -to 00:02:45 -c copy clip.mp4
-
-# 合并视频
-ffmpeg -f concat -safe 0 -i concat_list.txt -c copy output.mp4
+### 视频处理工具
+```bash
+# 手动切割视频片段 (强制重编码以对齐关键帧)
+ffmpeg -i video.mp4 -ss 10 -to 40 -c:v libx264 -crf 23 -c:a aac output.mp4
 ```
 
 ---
@@ -195,7 +195,6 @@ ffmpeg -f concat -safe 0 -i concat_list.txt -c copy output.mp4
 | `SCHEDULER_CHECK_INTERVAL` | 否 | `* * * * *` | 调度器检查间隔 |
 | `DATABASE_URL` | 是 | `./data/engine_vec.db` | 数据库路径 |
 | `PORT` | 否 | `3001` | 后端端口 |
-| `REDIS_HOST` | 否 | `localhost` | Redis 地址 |
 | `STORAGE_PATH` | 否 | `./storage` | 文件存储路径 |
 
 ---

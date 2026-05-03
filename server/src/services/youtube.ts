@@ -3,6 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { db } from '../db/init';
 
+// Helper to run yt-dlp and get raw stdout
+async function runYtDlpRaw(url: string, flags: any): Promise<string> {
+  const result = await youtubedl.exec(url, flags);
+  return result.stdout;
+}
+
 export interface VideoMetadata {
   videoId: string;
   title: string;
@@ -123,16 +129,21 @@ async function getVideoWithSubtitles(videoId: string): Promise<VideoMetadata | n
   try {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const proxy = getProxy();
+    const commonOptions: any = {
+      noWarnings: true,
+      callHome: false,
+    };
+    if (proxy) {
+      commonOptions.proxy = proxy;
+    }
 
     console.log(`Fetching video info for ${videoId}...`);
 
     // Get video info
     const info = await youtubedl(videoUrl, {
+      ...commonOptions,
       dumpJson: true,
-      noWarnings: true,
-      noCallHome: true,
-      proxy: proxy
-    });
+    }) as any;
 
     console.log(`  Title: ${info.title}`);
     console.log(`  Duration: ${info.duration} seconds`);
@@ -143,18 +154,18 @@ async function getVideoWithSubtitles(videoId: string): Promise<VideoMetadata | n
 
     try {
       await youtubedl(videoUrl, {
+        ...commonOptions,
         writeSub: true,
+        writeAutoSub: true, // Also try auto-generated subtitles
         subLang: 'en',
         subFormat: 'vtt',
         output: subtitlePath,
-        noWarnings: true,
-        noCallHome: true,
-        proxy: proxy
       });
 
-      // Find the actual subtitle file (youtube-dl adds language suffix)
+      // Find the actual subtitle file (youtube-dl adds language suffix and type)
+      // It could be .en.vtt or .en-orig.vtt or .en.auto.vtt
       const subtitleFiles = fs.readdirSync(process.cwd())
-        .filter(f => f.startsWith(`temp-${videoId}.vtt`) && f.endsWith('.vtt'));
+        .filter(f => f.includes(`temp-${videoId}`) && f.endsWith('.vtt'));
 
       if (subtitleFiles.length > 0) {
         const actualSubtitlePath = path.join(process.cwd(), subtitleFiles[0]);
@@ -199,17 +210,48 @@ export async function fetchChannelVideos(
   maxVideos: number = 20
 ): Promise<ChannelVideos> {
   try {
-    const channelHandle = extractChannelHandle(channelUrl);
-    console.log(`Fetching channel: ${channelHandle}`);
+    const proxy = getProxy();
+    const commonOptions: any = {
+      noWarnings: true,
+      callHome: false,
+    };
+    if (proxy) {
+      commonOptions.proxy = proxy;
+    }
 
-    // youtube-dl-exec doesn't support channel browsing
-    // This is a limitation - you would need YouTube Data API v3 for this
-    console.warn('youtube-dl-exec does not support channel browsing. Use YouTube Data API v3 instead.');
+    console.log(`Fetching channel videos: ${channelUrl}`);
 
-    return { videos: [] };
-  } catch (error) {
+    const stdout = await runYtDlpRaw(channelUrl, {
+      ...commonOptions,
+      dumpJson: true,
+      flatPlaylist: true,
+      playlistEnd: maxVideos,
+    });
+
+    const videoList = stdout
+      .split('\n')
+      .filter(line => line.trim())
+      .map(line => JSON.parse(line));
+
+    console.log(`  Found ${videoList.length} videos`);
+
+    const results: VideoMetadata[] = [];
+    for (const video of videoList) {
+      if (!video.id) continue;
+      
+      const info = await getVideoWithSubtitles(video.id);
+      if (info) {
+        results.push(info);
+      }
+    }
+
+    return { videos: results };
+  } catch (error: any) {
     console.error('Failed to fetch channel videos:', error);
-    throw new Error(`Failed to fetch channel videos: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    if (error.stderr) console.error('Error stderr:', error.stderr);
+    if (error.stdout) console.error('Error stdout:', error.stdout);
+    
+    throw new Error(`Failed to fetch channel videos: ${error.message || 'Check logs for details'}`);
   }
 }
 

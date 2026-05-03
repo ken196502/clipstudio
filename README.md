@@ -83,10 +83,9 @@ npm run dev
 - Framer Motion（动画）
 - shadcn/ui + Radix UI（组件库）
 
-### 后端（待实现）
+### 后端
 - Express.js + TypeScript
 - SQLite / PostgreSQL
-- Bull + Redis（任务队列）
 - node-cron（定时任务调度）
 - OpenAI API（LLM 分析）
 - YouTube.js（视频信息和字幕提取）

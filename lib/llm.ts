@@ -19,7 +19,7 @@ if (!LLM_CONFIG.apiKey) {
  */
 const LLMResponseSchema = z.object({
   success: z.boolean(),
-  data: z.record(z.any()).optional(),
+  data: z.record(z.string(), z.any()).optional(),
   error: z.string().optional(),
 })
 
@@ -98,7 +98,7 @@ export async function callLLM<T = Record<string, any>>(
       parsedData = validation.data
     }
 
-    return { success: true, data: parsedData }
+    return { success: true, data: parsedData as T }
   } catch (error: any) {
     return { success: false, error: error.message || "Unknown error" }
   }

@@ -25,20 +25,22 @@ function getProxy(): string {
  * Get storage directory for videos
  */
 function getStorageDir(): string {
-  const storageDir = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage', 'videos');
+  const storagePath = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage');
+  const storageDir = path.isAbsolute(storagePath) ? storagePath : path.resolve(process.cwd(), storagePath);
+  const videosDir = path.join(storageDir, 'videos');
 
   // Create directory if it doesn't exist
-  if (!fs.existsSync(storageDir)) {
-    fs.mkdirSync(storageDir, { recursive: true });
+  if (!fs.existsSync(videosDir)) {
+    fs.mkdirSync(videosDir, { recursive: true });
   }
 
-  return storageDir;
+  return videosDir;
 }
 
 /**
  * Get video file path
  */
-function getVideoPath(videoId: string, format: string = 'mp4'): string {
+export function getVideoPath(videoId: string, format: string = 'mp4'): string {
   const storageDir = getStorageDir();
   return path.join(storageDir, `${videoId}.${format}`);
 }
@@ -79,26 +81,29 @@ export async function downloadVideo(
   try {
     const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
     const proxy = getProxy();
+    const commonOptions: any = {
+      noWarnings: true,
+      callHome: false,
+    };
+    if (proxy) {
+      commonOptions.proxy = proxy;
+    }
 
     // Get video info first
     const info = await youtubedl(videoUrl, {
+      ...commonOptions,
       dumpJson: true,
-      noWarnings: true,
-      noCallHome: true,
-      proxy: proxy
-    });
+    }) as any;
 
     const duration = info.duration || 0;
 
     // Download video
     console.log(`  Starting download...`);
     await youtubedl(videoUrl, {
+      ...commonOptions,
       format: quality === 'best' ? 'bestvideo+bestaudio/best' : 'worst',
       mergeOutputFormat: format,
       output: filePath,
-      noWarnings: true,
-      noCallHome: true,
-      proxy: proxy
     });
 
     // Check if file exists

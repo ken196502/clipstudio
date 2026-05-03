@@ -1,11 +1,12 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import type { CombineRequest } from '../types';
 import { db } from '../db/init';
-import { downloadVideo, isVideoDownloaded } from '../services/downloader';
+import { downloadVideo, isVideoDownloaded, getVideoPath } from '../services/downloader';
 import { extractClip, combineClips, getVideoInfo } from '../services/ffmpeg';
 import { AppError, asyncHandler } from '../middleware/error-handler';
 import * as path from 'path';
+import * as fs from 'fs';
 
 const router = express.Router();
 
@@ -22,7 +23,7 @@ const combineTasks = new Map<string, {
 /**
  * POST /api/combine - Submit combine task
  */
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { clipIds, outputFormat = 'mp4', resolution = '1080p' } = req.body as CombineRequest;
 
   if (!clipIds || !Array.isArray(clipIds) || clipIds.length === 0) {
@@ -59,8 +60,8 @@ router.post('/', asyncHandler(async (req, res) => {
 /**
  * GET /api/combine/:taskId - Get combine task status
  */
-router.get('/:taskId', asyncHandler(async (req, res) => {
-  const { taskId } = req.params;
+router.get('/:taskId', asyncHandler(async (req: Request, res: Response) => {
+  const taskId = req.params.taskId as string;
 
   const task = combineTasks.get(taskId);
 
@@ -103,7 +104,11 @@ async function processCombineTask(
     task.totalClips = clips.length;
 
     // Download videos and extract clips
-    const tempDir = path.join(process.cwd(), 'storage', 'temp');
+    const storagePath = process.env.STORAGE_PATH || path.join(process.cwd(), 'storage');
+    const storageDir = path.isAbsolute(storagePath) ? storagePath : path.resolve(process.cwd(), storagePath);
+    const tempDir = path.join(storageDir, 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    
     const extractedClips: string[] = [];
 
     for (let i = 0; i < clips.length; i++) {
@@ -116,11 +121,11 @@ async function processCombineTask(
       // Check if video is downloaded
       if (!isVideoDownloaded(clip.video_id)) {
         console.log(`Downloading video ${clip.video_id}...`);
-        await downloadVideo(clip.video_id, { quality: 'medium' });
+        await downloadVideo(clip.video_id, { quality: 'best' });
       }
 
       // Get video path
-      const videoPath = path.join(process.cwd(), 'storage', 'videos', `${clip.video_id}.mp4`);
+      const videoPath = getVideoPath(clip.video_id);
 
       // Extract clip
       const clipPath = path.join(tempDir, `clip_${clip.id}.mp4`);
@@ -129,7 +134,7 @@ async function processCombineTask(
         startSec: clip.start_sec,
         endSec: clip.end_sec,
         outputPath: clipPath,
-        codec: 'copy'
+        codec: 'reencode' // Use reencode for safety
       });
 
       extractedClips.push(clipPath);
@@ -139,13 +144,15 @@ async function processCombineTask(
     task.progress = 85;
     console.log('Combining clips...');
 
-    const outputDir = path.join(process.cwd(), 'storage', 'output');
+    const outputDir = path.join(storageDir, 'output');
+    if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+    
     const outputPath = path.join(outputDir, `${taskId}.${outputFormat}`);
 
     await combineClips({
       clipPaths: extractedClips,
       outputPath,
-      codec: 'copy'
+      codec: 'reencode' // Use reencode for safety
     });
 
     // Clean up temp files

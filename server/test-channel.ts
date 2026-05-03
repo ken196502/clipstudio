@@ -21,12 +21,13 @@ async function testChannelBrowse() {
           playlistEnd: 3,
           noWarnings: true,
           proxy: proxy
-        });
+        }) as any;
 
-        console.log(`  Found ${videos.length} videos`);
+        const videoList = Array.isArray(videos) ? videos : (videos.entries || []);
+        console.log(`  Found ${videoList.length} videos`);
 
-        if (Array.isArray(videos) && videos.length > 0) {
-          videos.forEach((video, index) => {
+        if (videoList.length > 0) {
+          videoList.forEach((video: any, index: number) => {
             console.log(`    ${index + 1}. ${video.title}`);
             console.log(`       ID: ${video.id}`);
           });

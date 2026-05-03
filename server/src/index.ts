@@ -7,7 +7,6 @@ import jobsRouter from './routes/jobs';
 import clipsRouter from './routes/clips';
 import combineRouter from './routes/combine';
 import luckyComboRouter from './routes/lucky-combo';
-import { initializeQueues, closeQueues } from './services/queue';
 import { startScheduler, stopScheduler } from './services/scheduler';
 import { rateLimiter, strictRateLimiter } from './middleware/rate-limit';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
@@ -46,31 +45,27 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Database: ${process.env.DATABASE_URL || './data/engine_vec.db'}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Database: ${process.env.DATABASE_URL || './data/engine_vec.db'}`);
+    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
 
-  // Initialize job queues
-  try {
-    initializeQueues();
-  } catch (error) {
-    console.error('Failed to initialize job queues:', error);
-  }
+    // Start scheduler
+    try {
+      startScheduler();
+    } catch (error) {
+      console.error('Failed to start scheduler:', error);
+    }
+  });
+}
 
-  // Start scheduler
-  try {
-    startScheduler();
-  } catch (error) {
-    console.error('Failed to start scheduler:', error);
-  }
-});
+export { app };
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
   stopScheduler();
-  await closeQueues();
   db.close();
   process.exit(0);
 });
@@ -78,7 +73,6 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
   stopScheduler();
-  await closeQueues();
   db.close();
   process.exit(0);
 });

@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { LuckyComboRequest } from '../types';
 import { AppError, asyncHandler } from '../middleware/error-handler';
@@ -6,7 +6,7 @@ import { AppError, asyncHandler } from '../middleware/error-handler';
 const router = express.Router();
 
 // POST /api/lucky-combo - Smart clip selection
-router.post('/', asyncHandler(async (req, res) => {
+router.post('/', asyncHandler(async (req: Request, res: Response) => {
   const { prompt } = req.body as LuckyComboRequest;
 
   if (!prompt || !prompt.trim()) {
