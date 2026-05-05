@@ -34,6 +34,7 @@ export interface SubtitleSegment {
 export interface Clip {
   id: number;
   video_id: string;
+  video_title?: string;
   kol_name: string;
   start_sec: number;
   end_sec: number;
@@ -78,6 +79,8 @@ export interface UpdateKOLRequest {
     max_videos?: number;
   };
   active?: number;
+  /** Clear with null so the next cron slot becomes due */
+  last_run?: string | null;
 }
 
 export interface SearchRequest {

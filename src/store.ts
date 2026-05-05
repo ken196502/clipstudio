@@ -1,7 +1,22 @@
 import { create } from 'zustand';
 
-const API_ORIGIN = (import.meta as any).env?.VITE_API_ORIGIN || '';
-const API_BASE = `${API_ORIGIN}/api`;
+function normalizeApiOrigin(raw: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+
+  // Common misconfig: ":3000" (missing hostname). Treat as localhost.
+  if (/^:\d+$/.test(s)) return `http://localhost${s}`;
+
+  // Allow "localhost:3001" without scheme.
+  if (/^[^/]+:\d+$/.test(s) && !/^https?:\/\//i.test(s)) return `http://${s}`;
+
+  return s;
+}
+
+const RAW_API_ORIGIN = (import.meta as any).env?.VITE_API_ORIGIN as string | undefined;
+const API_ORIGIN = normalizeApiOrigin(RAW_API_ORIGIN || '').replace(/\/+$/, ''); // trim trailing slashes
+// VITE_API_ORIGIN may already include "/api" depending on deployment/proxy setup.
+const API_BASE = API_ORIGIN ? (API_ORIGIN.endsWith('/api') ? API_ORIGIN : `${API_ORIGIN}/api`) : '/api';
 
 export interface KOL {
   id: number;
@@ -107,6 +122,46 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   }
 }
 
+function parseKeywords(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    return raw.filter((k): k is string => typeof k === 'string').map((k) => k.trim()).filter(Boolean);
+  }
+  if (typeof raw === 'string') {
+    try {
+      const p = JSON.parse(raw);
+      return Array.isArray(p) ? p.filter((k): k is string => typeof k === 'string') : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function mapApiClip(clip: Record<string, unknown>): Clip {
+  const th = clip.thumbnail;
+  const thumbnail =
+    typeof th === 'string' && th.length > 0
+      ? th.startsWith('http') || th.startsWith('/')
+        ? th
+        : `/${th}`
+      : '';
+  return {
+    id: clip.id as number,
+    video_id: clip.video_id as string,
+    videoTitle: (clip.video_title as string) || (clip.videoTitle as string) || '未知视频',
+    kolName: (clip.kol_name as string) || (clip.kolName as string) || '',
+    thumbnail,
+    title: (clip.title as string) || '',
+    summary: (clip.summary as string) || '',
+    keywords: parseKeywords(clip.keywords),
+    startSec: Number(clip.start_sec ?? clip.startSec ?? 0),
+    endSec: Number(clip.end_sec ?? clip.endSec ?? 0),
+    topicCategory: (clip.topic_category as string) || (clip.topicCategory as string) || 'other',
+    createdAt: (clip.created_at as string) || (clip.createdAt as string) || '',
+    relevance: clip.relevance as number | undefined,
+  };
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   activePage: 'search',
   theme: 'dark',
@@ -136,21 +191,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   fetchJobs: async () => {
     set({ isLoading: true, error: null });
     try {
-      const data = await fetchAPI<{ jobs: any[] }>('/jobs');
-      const jobs: Job[] = data.jobs.map(job => {
-        // Get KOL name from kol_id
-        const kol = get().kols.find(k => k.id === job.kol_id);
-        return {
-          ...job,
-          kolName: kol?.name || 'Unknown',
-          videoTitle: job.video_id || 'Processing...',
-          time: job.started_at ? new Date(job.started_at).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' }) : undefined,
-          duration: job.started_at && job.completed_at
-            ? `${Math.floor((new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 1000 / 60)}m ${Math.floor((new Date(job.completed_at).getTime() - new Date(job.started_at).getTime()) / 1000 % 60)}s`
-            : undefined,
-        };
-      });
-      set({ jobs, isLoading: false });
+      const data = await fetchAPI<{ jobs: Job[] }>('/jobs');
+      set({ jobs: data.jobs, isLoading: false });
     } catch (error) {
       set({ error: 'Failed to fetch jobs', isLoading: false });
     }
@@ -160,11 +202,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const data = await fetchAPI<{ clips: any[] }>('/clips');
-      const clips: Clip[] = data.clips.map(clip => ({
-        ...clip,
-        videoTitle: clip.video_id || 'Unknown Video',
-        createdAt: clip.created_at,
-      }));
+      const clips: Clip[] = data.clips.map((c) => mapApiClip(c));
       set({ clips, isLoading: false });
     } catch (error) {
       set({ error: 'Failed to fetch clips', isLoading: false });
@@ -219,10 +257,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify({ query }),
       });
-      const clips: Clip[] = data.results.map(r => ({
-        ...r.clip,
-        videoTitle: r.clip.video_id || 'Unknown Video',
-        createdAt: r.clip.created_at,
+      const clips: Clip[] = data.results.map((r) => ({
+        ...mapApiClip(r.clip),
         relevance: r.relevance,
       }));
       set({ isLoading: false });
@@ -240,11 +276,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         method: 'POST',
         body: JSON.stringify({ prompt }),
       });
-      const clips: Clip[] = data.selectedClips.map(clip => ({
-        ...clip,
-        videoTitle: clip.video_id || 'Unknown Video',
-        createdAt: clip.created_at,
-      }));
+      const clips: Clip[] = data.selectedClips.map((c) => mapApiClip(c));
       set({ isLoading: false });
       return clips;
     } catch (error) {

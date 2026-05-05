@@ -2,35 +2,15 @@ import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { Job } from '../types';
 import { AppError, asyncHandler } from '../middleware/error-handler';
+import { listJobsForClient } from '../services/jobs-list';
+import { notifyJobsChanged } from '../services/job-broadcast';
 
 const router = express.Router();
 
 // GET /api/jobs - Get all jobs (with optional status filter)
 router.get('/', asyncHandler(async (req: Request, res: Response) => {
   const { status } = req.query;
-
-  let query = 'SELECT * FROM jobs ORDER BY started_at DESC';
-  const params: any[] = [];
-
-  if (status) {
-    query = 'SELECT * FROM jobs WHERE status = ? ORDER BY started_at DESC';
-    params.push(status);
-  }
-
-  const rows = db.prepare(query).all(...params) as any[];
-
-  const jobs: Job[] = rows.map(row => ({
-    id: row.id,
-    kol_id: row.kol_id,
-    video_id: row.video_id,
-    stage: row.stage,
-    status: row.status,
-    progress: row.progress,
-    error_message: row.error_message,
-    started_at: row.started_at,
-    completed_at: row.completed_at
-  }));
-
+  const jobs = listJobsForClient(typeof status === 'string' ? status : undefined);
   res.json({ jobs });
 }));
 
@@ -78,6 +58,8 @@ router.post('/:id/retry', asyncHandler(async (req: Request, res: Response) => {
     SET status = 'running', progress = 0, error_message = NULL, started_at = ?
     WHERE id = ?
   `).run(new Date().toISOString(), id);
+
+  notifyJobsChanged(true);
 
   res.json({ message: 'Job retried successfully' });
 }));

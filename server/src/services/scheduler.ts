@@ -2,25 +2,49 @@ import cron from 'node-cron';
 import cronParser from 'cron-parser';
 import { db } from '../db/init';
 import { processJob } from './job-processor';
+import { notifyJobsChanged } from './job-broadcast';
 
 let schedulerTask: cron.ScheduledTask | null = null;
 
 /**
- * Check if a cron expression should run now
+ * True when the latest scheduled occurrence is strictly after effectiveLastTs and not in the future.
+ *
+ * Important: comparing "prev fired within last 60s" only works for "* * * * *"; hourly/daily/weekly
+ * expressions would otherwise miss forever after the first minute boundary.
+ *
+ * effectiveLastTs: last successful schedule tick (kol.last_run) or kol.created_at if never ran.
  */
-function shouldRunNow(cronExpression: string): boolean {
+function cronPrevMsBeforeNow(cronExpression: string, nowMs: number): number | null {
   try {
-    const interval = cronParser.parseExpression(cronExpression);
-    const prev = interval.prev();
-    const now = new Date();
-
-    // Check if the previous run was within the last minute
-    const diff = now.getTime() - prev.getTime();
-    return diff < 60000; // 60 seconds
+    const interval = cronParser.parseExpression(cronExpression, {
+      currentDate: new Date(nowMs),
+    });
+    return interval.prev().getTime();
   } catch (error) {
     console.error(`Invalid cron expression: ${cronExpression}`, error);
-    return false;
+    return null;
   }
+}
+
+function kolEffectiveLastRunMs(kol: { last_run: string | null; created_at: string }): number {
+  if (kol.last_run) {
+    const t = Date.parse(kol.last_run);
+    if (!Number.isNaN(t)) return t;
+  }
+  const created = Date.parse(kol.created_at);
+  return Number.isNaN(created) ? 0 : created;
+}
+
+function hasActiveJobForKol(kolId: number): boolean {
+  const row = db.prepare(`
+    SELECT id
+    FROM jobs
+    WHERE kol_id = ?
+      AND status IN ('running', 'pending')
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(kolId) as { id: number } | undefined;
+  return Boolean(row);
 }
 
 /**
@@ -28,8 +52,6 @@ function shouldRunNow(cronExpression: string): boolean {
  */
 async function checkAndTriggerJobs(): Promise<void> {
   try {
-    console.log('[Scheduler] Checking for jobs to run...');
-
     // Get all active KOLs
     const kols = db.prepare('SELECT * FROM kols WHERE active = 1').all() as any[];
 
@@ -42,8 +64,23 @@ async function checkAndTriggerJobs(): Promise<void> {
           continue;
         }
 
-        // Check if this KOL should run now
-        if (shouldRunNow(cronExpression)) {
+        const nowMs = Date.now();
+        const effectiveLastTs = kolEffectiveLastRunMs({
+          last_run: kol.last_run ?? null,
+          created_at: kol.created_at ?? '',
+        });
+
+        const slotTs = cronPrevMsBeforeNow(cronExpression, nowMs);
+        if (
+          slotTs !== null &&
+          slotTs > effectiveLastTs &&
+          slotTs <= nowMs
+        ) {
+          if (hasActiveJobForKol(kol.id)) {
+            console.log(`[Scheduler] Skip ${kol.name}: active job already exists`);
+            continue;
+          }
+
           console.log(`[Scheduler] Triggering job for KOL: ${kol.name}`);
 
           // Create a job entry
@@ -59,9 +96,11 @@ async function checkAndTriggerJobs(): Promise<void> {
             console.error(`[Scheduler] Error processing job ${jobId}:`, error);
           });
 
-          // Update last_run
+          notifyJobsChanged(true);
+
+          // Book the cron slot timestamp (prevents repeats within same slot vs next tick)
           db.prepare('UPDATE kols SET last_run = ? WHERE id = ?')
-            .run(new Date().toISOString(), kol.id);
+            .run(new Date(slotTs).toISOString(), kol.id);
         }
       } catch (error) {
         console.error(`[Scheduler] Failed to check KOL ${kol.id}:`, error);

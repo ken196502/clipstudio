@@ -2,10 +2,15 @@ import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { KOL, CreateKOLRequest, UpdateKOLRequest } from '../types';
 import { processJob } from '../services/job-processor';
+import { notifyJobsChanged } from '../services/job-broadcast';
 import { AppError, asyncHandler } from '../middleware/error-handler';
 import { extractChannelHandle } from '../services/youtube';
 
 const router = express.Router();
+
+function normalizeChannelUrl(input: string): string {
+  return input.trim().replace(/\/+$/, '');
+}
 
 function deriveNameFromChannelUrl(channelUrl: string): string {
   const channelHandle = extractChannelHandle(channelUrl).trim();
@@ -41,20 +46,51 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     throw new AppError(400, 'channel_url is required');
   }
 
-  const resolvedName = (name || '').trim() || deriveNameFromChannelUrl(channel_url);
+  const normalizedUrl = normalizeChannelUrl(channel_url);
+  const resolvedName = (name || '').trim() || deriveNameFromChannelUrl(normalizedUrl);
   console.log('[kols:create] incoming payload:', {
-    channel_url,
+    channel_url: normalizedUrl,
     hasName: Boolean(name),
     resolvedName,
     tagsCount: Array.isArray(tags) ? tags.length : 0,
   });
 
+  // Idempotent create: if the channel already exists, update fields and return it.
+  // This prevents duplicate rows and duplicate UI entries.
+  const existing = db.prepare('SELECT * FROM kols WHERE channel_url = ?').get(normalizedUrl) as any;
+  if (existing) {
+    db.prepare(`
+      UPDATE kols
+      SET name = ?, tags = ?, fetch_policy = ?, active = ?
+      WHERE id = ?
+    `).run(
+      resolvedName,
+      JSON.stringify(tags),
+      JSON.stringify(fetch_policy),
+      active,
+      existing.id
+    );
+
+    const updated = db.prepare('SELECT * FROM kols WHERE id = ?').get(existing.id) as any;
+    return res.status(200).json({
+      id: updated.id,
+      name: updated.name,
+      channel_url: updated.channel_url,
+      platform: updated.platform,
+      tags: updated.tags ? JSON.parse(updated.tags) : [],
+      fetch_policy: updated.fetch_policy ? JSON.parse(updated.fetch_policy) : {},
+      active: updated.active,
+      next_run: updated.next_run,
+      created_at: updated.created_at
+    });
+  }
+
   const result = db.prepare(`
-    INSERT INTO kols (name, channel_url, platform, tags, fetch_policy, active)
-    VALUES (?, ?, 'youtube', ?, ?, ?)
-  `).run(
+      INSERT INTO kols (name, channel_url, platform, tags, fetch_policy, active)
+      VALUES (?, ?, 'youtube', ?, ?, ?)
+    `).run(
     resolvedName,
-    channel_url,
+    normalizedUrl,
     JSON.stringify(tags),
     JSON.stringify(fetch_policy),
     active
@@ -62,7 +98,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
 
   const kol = db.prepare('SELECT * FROM kols WHERE id = ?').get(result.lastInsertRowid) as any;
 
-  res.status(201).json({
+  return res.status(201).json({
     id: kol.id,
     name: kol.name,
     channel_url: kol.channel_url,
@@ -107,6 +143,10 @@ router.patch('/:id', asyncHandler(async (req: Request, res: Response) => {
   if (updates.active !== undefined) {
     updatesArray.push('active = ?');
     values.push(updates.active);
+  }
+  if (updates.last_run !== undefined) {
+    updatesArray.push('last_run = ?');
+    values.push(updates.last_run === null ? null : updates.last_run);
   }
 
   if (updatesArray.length === 0) {
@@ -159,6 +199,18 @@ router.post('/:id/trigger', asyncHandler(async (req: Request, res: Response) => 
     throw new AppError(404, 'KOL not found');
   }
 
+  const activeJob = db.prepare(`
+    SELECT id
+    FROM jobs
+    WHERE kol_id = ?
+      AND status IN ('running', 'pending')
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(id) as { id: number } | undefined;
+  if (activeJob) {
+    throw new AppError(409, `Job ${activeJob.id} is still active for this KOL`);
+  }
+
   // Create a job entry
   const result = db.prepare(`
     INSERT INTO jobs (kol_id, status, stage, progress, started_at)
@@ -171,6 +223,8 @@ router.post('/:id/trigger', asyncHandler(async (req: Request, res: Response) => 
   processJob(jobId).catch(error => {
     console.error(`Error processing job ${jobId}:`, error);
   });
+
+  notifyJobsChanged(true);
 
   res.json({
     message: 'Job triggered successfully',

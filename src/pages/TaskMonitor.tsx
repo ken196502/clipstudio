@@ -3,18 +3,52 @@ import { useAppStore } from '../store';
 import { Button } from '@/components/ui/button';
 import { Loader2, CheckCircle2, XCircle, RefreshCw, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { jobsWebSocketUrl } from '../lib/jobs-ws';
+import type { Job } from '../store';
 
 export default function TaskMonitor() {
   const { jobs, fetchJobs } = useAppStore();
 
-  // Poll for job updates every 2 seconds
   useEffect(() => {
-    const interval = setInterval(() => {
-      fetchJobs();
-    }, 2000);
+    const url = jobsWebSocketUrl();
+    let ws: WebSocket | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let closed = false;
 
-    return () => clearInterval(interval);
-  }, [fetchJobs]);
+    const connect = () => {
+      if (closed) return;
+      try {
+        ws = new WebSocket(url);
+      } catch {
+        return;
+      }
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(ev.data) as { type?: string; jobs?: Job[] };
+          if (msg.type === 'jobs' && Array.isArray(msg.jobs)) {
+            useAppStore.setState({ jobs: msg.jobs });
+          }
+        } catch {
+          /* ignore malformed */
+        }
+      };
+      ws.onclose = () => {
+        if (closed) return;
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => {
+        ws?.close();
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      ws?.close();
+    };
+  }, []);
 
   const runningJobs = jobs.filter(j => j.status === 'running');
   const historyJobs = jobs.filter(j => j.status !== 'running');

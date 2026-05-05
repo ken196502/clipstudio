@@ -2,6 +2,8 @@ import { db } from '../db/init';
 import { fetchChannelVideos, videoExists, saveVideo, getKOL } from './youtube';
 import { segmentSubtitles } from './segmenter';
 import { analyzeClip } from './llm';
+import { generateClipThumbnailAtTimestamp } from './clip-thumbnail';
+import { notifyJobsChanged } from './job-broadcast';
 
 export type JobStage = 'crawl' | 'process' | 'clip' | 'index';
 export type JobStatus = 'pending' | 'running' | 'success' | 'failed';
@@ -35,6 +37,7 @@ function updateJobProgress(
   `).run(stage, status, progress, error || null, jobId);
 
   console.log(`[Job ${jobId}] ${stage} - ${status} - ${progress}%${videoTitle ? ` - ${videoTitle}` : ''}`);
+  notifyJobsChanged();
 }
 
 /**
@@ -46,6 +49,7 @@ function completeJob(jobId: number, status: 'success' | 'failed', error?: string
     SET status = ?, progress = ?, error_message = ?, completed_at = ?
     WHERE id = ?
   `).run(status, status === 'success' ? 100 : 0, error || null, new Date().toISOString(), jobId);
+  notifyJobsChanged(true);
 }
 
 /**
@@ -214,7 +218,20 @@ async function processClipStage(jobId: number, kol: any): Promise<void> {
         // Analyze each segment
         for (const segment of segments) {
           try {
-            const analysis = await analyzeClip(segment.text, video.title, kol.name);
+            const analysis = await analyzeClip(
+              segment.text,
+              video.title,
+              kol.name,
+              segment.startSec,
+              segment.endSec
+            );
+
+            const frameThumb = await generateClipThumbnailAtTimestamp(
+              video.id,
+              segment.startSec,
+              segment.endSec
+            );
+            const thumbnailUrl = frameThumb || video.thumbnail || null;
 
             // Save clip to database
             db.prepare(`
@@ -229,7 +246,7 @@ async function processClipStage(jobId: number, kol: any): Promise<void> {
               analysis.summary,
               JSON.stringify(analysis.keywords),
               analysis.topic_category,
-              video.thumbnail
+              thumbnailUrl
             );
 
             processedSegments++;

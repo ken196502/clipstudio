@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useAppStore, Clip } from '../store';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
@@ -6,9 +6,27 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Play, Download, Copy, Film, Shapes } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
+function youtubeEmbedSrc(clip: Clip): string {
+  const start = Math.max(0, Math.floor(clip.startSec));
+  const end = Math.max(start + 1, Math.ceil(clip.endSec));
+  return `https://www.youtube.com/embed/${clip.video_id}?start=${start}&end=${end}&autoplay=1&rel=0`;
+}
+
 export default function ClipLibrary() {
-  const { clips } = useAppStore();
+  const { clips, fetchClips } = useAppStore();
   const [selectedClip, setSelectedClip] = useState<Clip | null>(null);
+  const [previewClip, setPreviewClip] = useState<Clip | null>(null);
+
+  useEffect(() => {
+    fetchClips().catch((error) => {
+      console.error('Failed to refresh clips on library open:', error);
+    });
+  }, [fetchClips]);
+
+  const openPreview = useCallback((clip: Clip) => {
+    setSelectedClip(null);
+    setPreviewClip(clip);
+  }, []);
   const [selectedKol, setSelectedKol] = useState('all');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
@@ -20,7 +38,6 @@ export default function ClipLibrary() {
           .filter((name) => typeof name === 'string' && name.trim().length > 0)
       )
     ).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-    console.log('[ClipLibrary] KOL options built:', values);
     return values;
   }, [clips]);
 
@@ -32,7 +49,6 @@ export default function ClipLibrary() {
           .filter((category) => typeof category === 'string' && category.trim().length > 0)
       )
     ).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-    console.log('[ClipLibrary] Category options built:', values);
     return values;
   }, [clips]);
 
@@ -53,13 +69,6 @@ export default function ClipLibrary() {
       result = [...result].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }
 
-    console.log('[ClipLibrary] Filter result:', {
-      total: clips.length,
-      selectedKol,
-      selectedCategory,
-      sortBy,
-      filtered: result.length,
-    });
     return result;
   }, [clips, selectedKol, selectedCategory, sortBy]);
 
@@ -139,7 +148,15 @@ export default function ClipLibrary() {
                 <div className="absolute inset-0 border-[0.5px] border-white/5 pointer-events-none mix-blend-overlay" />
                 
                 <div className="absolute inset-0 bg-zinc-950/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
-                  <Button size="icon" className="rounded-sm w-12 h-12 bg-amber-500 hover:bg-amber-400 text-zinc-950 scale-90 group-hover:scale-110 transition-transform shadow-[0_0_20px_rgba(245,158,11,0.5)] group/play">
+                  <Button
+                    type="button"
+                    size="icon"
+                    className="rounded-sm w-12 h-12 bg-amber-500 hover:bg-amber-400 text-zinc-950 scale-90 group-hover:scale-110 transition-transform shadow-[0_0_20px_rgba(245,158,11,0.5)] group/play"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPreview(clip);
+                    }}
+                  >
                     <Play className="w-5 h-5 ml-0.5 group-hover/play:animate-[wiggle_0.5s_ease-in-out]" fill="currentColor" />
                   </Button>
                 </div>
@@ -159,7 +176,7 @@ export default function ClipLibrary() {
                    <span className="text-[10px] font-mono text-zinc-500 tracking-widest uppercase">SRC: {clip.kolName}</span>
                 </div>
                 
-                <h3 className="font-display font-bold text-zinc-100 leading-tight mb-2 line-clamp-2 uppercase">
+                <h3 className="font-display font-bold text-zinc-100 leading-tight mb-2 line-clamp-2">
                   {clip.title}
                 </h3>
                 
@@ -199,12 +216,23 @@ export default function ClipLibrary() {
                    <span>RES: 1080p</span>
                  </div>
                  
-                 <button className="relative z-10 w-16 h-16 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 flex items-center justify-center transition-transform hover:scale-[1.15] active:scale-95 shadow-[0_0_20px_rgba(245,158,11,0.4)] group hover-sweep hover-fx">
+                 <button
+                    type="button"
+                    className="relative z-10 w-16 h-16 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 flex items-center justify-center transition-transform hover:scale-[1.15] active:scale-95 shadow-[0_0_20px_rgba(245,158,11,0.4)] group hover-sweep hover-fx"
+                    onClick={() => openPreview(selectedClip)}
+                  >
                     <Play className="w-8 h-8 ml-1 group-hover-wiggle relative z-10" fill="currentColor" />
                  </button>
                  
                  <div className="absolute bottom-0 inset-x-0 h-10 bg-zinc-950/80 backdrop-blur-sm border-t border-zinc-800 flex items-center px-4 gap-3">
-                    <Play className="w-4 h-4 text-zinc-400 cursor-pointer hover:text-white" />
+                    <button
+                      type="button"
+                      className="p-0 border-0 bg-transparent"
+                      onClick={() => openPreview(selectedClip)}
+                      aria-label="Play clip"
+                    >
+                      <Play className="w-4 h-4 text-zinc-400 cursor-pointer hover:text-white" />
+                    </button>
                     <div className="flex-1 h-1.5 bg-zinc-800 rounded-sm relative cursor-pointer group/bar">
                       <div className="absolute left-0 top-0 bottom-0 bg-amber-500 w-[30%] shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
                       <div className="absolute left-[30%] top-1/2 -translate-y-1/2 w-3 h-3 bg-white shadow-sm opacity-0 group-hover/bar:opacity-100 transition-opacity rounded-sm" />
@@ -226,7 +254,7 @@ export default function ClipLibrary() {
                        <span>//</span>
                        <span>SRC: {selectedClip.kolName}</span>
                     </div>
-                    <h2 className="text-xl font-display font-bold text-zinc-100 leading-tight mb-2 uppercase">
+                    <h2 className="text-xl font-display font-bold text-zinc-100 leading-tight mb-2">
                       {selectedClip.title}
                     </h2>
                     <p className="text-[10px] text-amber-500/80 font-mono tracking-widest uppercase truncate border border-amber-500/20 bg-amber-500/5 px-2 py-1 rounded-sm w-max">
@@ -265,6 +293,30 @@ export default function ClipLibrary() {
                 </div>
               </div>
             </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!previewClip} onOpenChange={(open) => !open && setPreviewClip(null)}>
+        <DialogContent className="max-w-5xl w-[95vw] p-0 gap-0 bg-zinc-950 border border-zinc-800 overflow-hidden">
+          {previewClip && (
+            <>
+              <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950 flex flex-col gap-1">
+                <span className="text-sm text-zinc-100 line-clamp-2 font-medium leading-snug">{previewClip.title}</span>
+                <span className="text-[10px] font-mono text-zinc-500 tracking-wide truncate">
+                  {previewClip.videoTitle} · {formatDuration(previewClip.startSec, previewClip.endSec)}
+                </span>
+              </div>
+              <div className="aspect-video w-full bg-black">
+                <iframe
+                  title="Clip preview"
+                  className="h-full w-full"
+                  src={youtubeEmbedSrc(previewClip)}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              </div>
+            </>
           )}
         </DialogContent>
       </Dialog>

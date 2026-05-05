@@ -13,8 +13,11 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     throw new AppError(400, 'prompt is required');
   }
 
-  // Get all clips
-  const rows = db.prepare('SELECT * FROM clips').all() as any[];
+  const rows = db
+    .prepare(
+      'SELECT clips.*, v.title AS video_title FROM clips LEFT JOIN videos AS v ON clips.video_id = v.id'
+    )
+    .all() as any[];
 
   // Simple keyword matching (in production, use LLM for better selection)
   const searchTerms = prompt.trim().toLowerCase().split(/\s+/);
@@ -35,6 +38,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     return {
       id: row.id,
       video_id: row.video_id,
+      video_title: row.video_title,
       kol_name: row.kol_name,
       start_sec: row.start_sec,
       end_sec: row.end_sec,
@@ -44,7 +48,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
       topic_category: row.topic_category,
       thumbnail: row.thumbnail,
       created_at: row.created_at,
-      score
+      score,
     };
   })
   .filter(clip => clip.score > 0)
