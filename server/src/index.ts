@@ -4,11 +4,11 @@ import express from 'express';
 import cors from 'cors';
 import { db } from './db/init';
 import { getClipThumbnailsDir } from './services/clip-thumbnail';
+import * as path from 'path';
 import kolsRouter from './routes/kols';
 import jobsRouter from './routes/jobs';
 import clipsRouter from './routes/clips';
 import combineRouter from './routes/combine';
-import luckyComboRouter from './routes/lucky-combo';
 import { startScheduler, stopScheduler } from './services/scheduler';
 import { attachJobWebSocket, closeJobWebSocket } from './services/job-broadcast';
 import { rateLimiter, strictRateLimiter } from './middleware/rate-limit';
@@ -36,13 +36,13 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api/clip-thumbnails', express.static(getClipThumbnailsDir(), { fallthrough: true }));
+app.use('/api/vertical-covers', express.static(path.resolve(process.cwd(), 'storage', 'vertical-videos'), { fallthrough: true }));
 
 // API Routes
 app.use('/api/kols', kolsRouter);
 app.use('/api/jobs', jobsRouter);
 app.use('/api/clips', clipsRouter);
 app.use('/api/combine', strictRateLimiter, combineRouter);
-app.use('/api/lucky-combo', strictRateLimiter, luckyComboRouter);
 
 // 404 handler
 app.use(notFoundHandler);

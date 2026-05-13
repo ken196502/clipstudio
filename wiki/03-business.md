@@ -4,6 +4,8 @@
 
 ENGINE_VEC 的核心价值链：**订阅 KOL → 自动抓取 → AI 处理 → 片段入库 → 搜索/组合**。
 
+> **项目类型：** 本地桌面应用（非 SaaS），所有数据存储在本地
+
 ```
 ┌──────────────┐
 │  用户添加 KOL │
@@ -15,7 +17,7 @@ ENGINE_VEC 的核心价值链：**订阅 KOL → 自动抓取 → AI 处理 → 
 │                   处理流水线 (Pipeline)                │
 │                                                      │
 │  [crawl]          [process]       [clip]    [index]  │
-│  抓取视频元数据 → 视频分段处理 → 提取片段 → 向量索引   │
+│  抓取视频元数据 → 验证字幕可解析 → LLM切分 → 入库     │
 │                                                      │
 └──────────────────────────┬───────────────────────────┘
                            │ 产出 Clip 对象
@@ -28,7 +30,7 @@ ENGINE_VEC 的核心价值链：**订阅 KOL → 自动抓取 → AI 处理 → 
               ┌────────────┼────────────┐
               ▼            ▼            ▼
          语义搜索       浏览筛选      拖拽合成
-        (Search)     (ClipLibrary)  (Combine)
+        (Search)     (ClipLibrary)
 ```
 
 ---
@@ -44,7 +46,7 @@ ENGINE_VEC 的核心价值链：**订阅 KOL → 自动抓取 → AI 处理 → 
 | 操作 | 触发方式 | Store Action | 说明 |
 |------|----------|--------------|------|
 | 添加 KOL | 点击"Add Entity" | `addKOL()` | 创建新 KOL，id 用 `Date.now()` 生成 |
-| 编辑配置 | 点击"CONFIG" | `updateKOL()` | 修改 channel_url、cron、tags |
+| 编辑配置 | 点击"CONFIG" | `updateKOL()` | 修改 channel_url、cron |
 | 手动触发 | 点击"EXECUTE" | `triggerJob()` | 仅对 `active=1` 的 KOL 显示此按钮 |
 
 **`triggerJob()` 逻辑：**
@@ -111,18 +113,6 @@ setIsSearching(false) + setHasSearched(true)
 - 第一条（最高相关）：`cyan-400`
 - 其余：`cyan-700`
 
-**Lucky Combo 功能：**
-
-这是一个特色功能，点击后触发三步动画序列，完成后自动跳转到合成页：
-
-```
-步骤 0: ANALYZING SEMANTIC VECTORS...   (3s)
-步骤 1: ALIGNING TIMELINE FRAGMENTS...  (3s)
-步骤 2: SYNTHESIZING COMPOSITION...     (3s)
-完成后: setActivePage('combine')
-```
-
-实现机制：`comboStep` 状态从 0 递增，通过 `useEffect` 监听，每 3 秒推进一步，到达 `COMBO_STEPS.length` 时触发页面跳转。
 
 ---
 
@@ -130,10 +120,11 @@ setIsSearching(false) + setHasSearched(true)
 
 **职责：** 展示所有已处理的视频片段，支持筛选和预览。
 
-**筛选维度（当前为 UI 展示，未接入过滤逻辑）：**
+**筛选维度：**
 - SOURCE KOL：按来源 KOL 筛选
-- CATEGORY：按话题分类筛选（观点/分析/教程）
 - SORT：按时间排序（最新/最旧）
+
+> 注：已移除 CATEGORY 筛选，因为系统不再由 LLM 生成 topic_category。
 
 **片段时长计算：**
 ```ts
@@ -145,7 +136,7 @@ const seconds = Math.floor(duration % 60);
 
 **详情弹窗（Dialog）：** 点击下载图标打开，展示：
 - 左侧：视频播放区（含模拟播放进度条，固定 30% 位置）
-- 右侧：片段元数据（分类、来源、标题、摘要、关键词）
+- 右侧：片段元数据（来源、标题、时间段）
 - 底部操作：COPY REF（复制引用）、EXTRACT（提取片段）
 
 ---
@@ -167,27 +158,37 @@ const removeClip = (id: number) => {
 // 注意：e.stopPropagation() 防止触发拖拽
 ```
 
-**合成触发：** 点击"COMBINE AS NEW VIDEO"按钮（当前为 UI 展示，未接入实际导出逻辑）。
+**垂直渲染触发：** 点击"DOWNLOAD VERTICAL"按钮，生成带标题和字幕的 9:16 竖屏视频。
 
 ---
 
-## API 集成点（待实现）
+## API 集成点（已实现）
 
-当前项目为纯前端 Mock，以下是预期的后端 API 接口：
+所有后端 API 已完整实现并连接前端：
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
 | `/api/kols` | GET | 获取所有 KOL 列表 |
-| `/api/kols` | POST | 添加新 KOL |
+| `/api/kols` | POST | 添加新 KOL（幂等：相同 channel_url 会更新） |
 | `/api/kols/:id` | PATCH | 更新 KOL 配置 |
+| `/api/kols/:id` | DELETE | 删除 KOL |
 | `/api/kols/:id/trigger` | POST | 手动触发抓取任务 |
 | `/api/jobs` | GET | 获取任务列表（支持 status 过滤） |
-| `/api/clips` | GET | 获取片段列表（支持 kolName、category 过滤） |
-| `/api/clips/search` | POST | 语义搜索（body: `{ query: string }`） |
-| `/api/combine` | POST | 提交合成任务（body: `{ clipIds: number[] }`） |
+| `/api/jobs/:id` | GET | 获取单个任务详情 |
+| `/api/jobs/:id/retry` | POST | 重试失败任务 |
+| `/api/clips` | GET | 获取片段列表（支持 kolName、sort 过滤） |
+| `/api/clips/:id` | GET | 获取单个片段详情 |
+| `/api/clips/search` | POST | 关键词搜索（body: `{ query: string }`） |
+| `/api/clips/vertical-render` | POST | 提交竖屏渲染任务（body: `{ clipId: number }`） |
+| `/api/clips/vertical-render/:jobId` | GET | 查询渲染进度 |
+| `/api/clips/vertical-download/:filename` | GET | 下载渲染后的竖屏视频 |
+| `/api/combine` | POST | 提交视频合成任务 |
+| `/api/combine/:taskId` | GET | 查询合成进度 |
+| `/api/combine/download/:filename` | GET | 下载合成后的视频 |
+| `/ws/jobs` | WebSocket | 实时推送任务状态变更 |
 
-Gemini API 用于：
-- 视频内容摘要生成（`summary` 字段）
-- 语义关键词提取（`keywords` 字段）
-- 话题分类（`topicCategory` 字段）
-- 搜索时的语义向量匹配（`relevance` 评分）
+LLM API 用于：
+- 视频字幕切分：输入完整字幕（带时间戳），输出 `title` + `start_sec` + `end_sec`
+- 搜索时的文本匹配（`title` + `subtitles` 内容）
+
+> 注：已移除 summary/keywords/topic_category/embedding_vector 等字段，LLM 只负责"切分+起标题"，不生成冗余分析内容。

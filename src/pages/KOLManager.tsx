@@ -1,10 +1,12 @@
 import { useState } from 'react';
+import React from 'react';
 import { useAppStore, KOL } from '../store';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { Plus, Terminal } from 'lucide-react';
+import { Plus, Terminal, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 
 const WEEKDAY_OPTIONS = [
   { label: '周日', value: '0' },
@@ -41,7 +43,7 @@ function parseWeeklyCron(cronExpr?: string): { weekday: string; hour: string } {
 }
 
 export default function KOLManager() {
-  const { kols, updateKOL, addKOL, isLoading } = useAppStore();
+  const { kols, updateKOL, addKOL, deleteKOL, isLoading } = useAppStore();
   const [editingKol, setEditingKol] = useState<KOL | null>(null);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [addSchedule, setAddSchedule] = useState<{ weekday: string; hour: string }>({
@@ -51,7 +53,6 @@ export default function KOLManager() {
   const [newKol, setNewKol] = useState<Partial<KOL>>({
     channel_url: '',
     platform: 'youtube',
-    tags: [],
     fetch_policy: { cron: buildWeeklyCron('1', '3'), max_videos: 20 },
     active: 1
   });
@@ -61,13 +62,19 @@ export default function KOLManager() {
       try {
         await updateKOL(editingKol.id, editingKol);
         setEditingKol(null);
+        toast.success('Entity updated successfully');
       } catch (error) {
         console.error('Failed to update KOL:', error);
+        toast.error('Failed to update entity');
       }
     }
   };
 
   const handleAdd = async () => {
+    if (!newKol.channel_url?.trim()) {
+      toast.error('Source URI is required');
+      return;
+    }
     try {
       await addKOL(newKol);
       setIsAddDialogOpen(false);
@@ -75,13 +82,38 @@ export default function KOLManager() {
       setNewKol({
         channel_url: '',
         platform: 'youtube',
-        tags: [],
         fetch_policy: { cron: buildWeeklyCron('1', '3'), max_videos: 20 },
         active: 1
       });
+      toast.success('Entity created successfully');
     } catch (error) {
       console.error('Failed to add KOL:', error);
+      toast.error('Failed to create entity');
     }
+  };
+
+  const handleDelete = async (e: React.MouseEvent, kolId: number) => {
+    e.stopPropagation();
+    toast('Confirm deletion', {
+      action: {
+        label: 'Delete',
+        onClick: async () => {
+          try {
+            await deleteKOL(kolId);
+            if (editingKol?.id === kolId) setEditingKol(null);
+            toast.success('Entity deleted successfully');
+          } catch (error) {
+            console.error('Failed to delete KOL:', error);
+            toast.error('Failed to delete entity');
+          }
+        },
+      },
+      cancel: {
+        label: 'Cancel',
+        onClick: () => {},
+      },
+      duration: 5000,
+    });
   };
 
   return (
@@ -108,6 +140,7 @@ export default function KOLManager() {
               <th className="px-6 py-4 font-bold">Source URI</th>
               <th className="px-6 py-4 font-bold">Cron</th>
               <th className="px-6 py-4 font-bold">Remark</th>
+              <th className="px-6 py-4 font-bold w-16"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/50 font-mono text-sm">
@@ -134,7 +167,16 @@ export default function KOLManager() {
                     })()}
                   </td>
                   <td className="px-6 py-4">
-                    <span className="text-zinc-400">{kol.tags?.[0] || '—'}</span>
+                    <span className="text-zinc-400">—</span>
+                  </td>
+                  <td className="px-6 py-4">
+                    <button
+                      onClick={(e) => handleDelete(e, kol.id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity text-zinc-600 hover:text-red-400 p-1 rounded-sm hover:bg-zinc-800"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </td>
                 </motion.tr>
               ))}
@@ -214,18 +256,6 @@ export default function KOLManager() {
                   </div>
                 );
               })()}
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Remark (Optional)</label>
-                <Input 
-                  value={editingKol.tags?.[0] || ''} 
-                  onChange={e => setEditingKol({
-                    ...editingKol, 
-                    tags: e.target.value.trim() ? [e.target.value.trim()] : []
-                  })}
-                  className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                  placeholder="可选备注"
-                />
-              </div>
             </div>
           )}
           <DialogFooter className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/50 flex gap-2">
@@ -301,18 +331,6 @@ export default function KOLManager() {
                   ))}
                 </select>
               </div>
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Remark (Optional)</label>
-              <Input
-                value={newKol.tags?.[0] || ''}
-                onChange={e => setNewKol({
-                  ...newKol,
-                  tags: e.target.value.trim() ? [e.target.value.trim()] : []
-                })}
-                className="bg-zinc-900 border-zinc-800 rounded-sm focus-visible:ring-1 focus-visible:ring-amber-500 text-sm h-10"
-                placeholder="可选备注"
-              />
             </div>
           </div>
           <DialogFooter className="px-6 py-4 border-t border-zinc-800 bg-zinc-900/50 flex gap-2">

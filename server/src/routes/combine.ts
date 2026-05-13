@@ -24,7 +24,7 @@ const combineTasks = new Map<string, {
  * POST /api/combine - Submit combine task
  */
 router.post('/', asyncHandler(async (req: Request, res: Response) => {
-  const { clipIds, outputFormat = 'mp4', resolution = '1080p' } = req.body as CombineRequest;
+  const { clipIds, outputFormat = 'mp4', resolution = '1080p', portrait = false, textOverlays } = req.body as CombineRequest & { portrait?: boolean; textOverlays?: string[] };
 
   if (!clipIds || !Array.isArray(clipIds) || clipIds.length === 0) {
     throw new AppError(400, 'clipIds is required and must be a non-empty array');
@@ -41,7 +41,7 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
   });
 
   // Start processing in background
-  processCombineTask(taskId, clipIds, outputFormat).catch(error => {
+  processCombineTask(taskId, clipIds, outputFormat, portrait, textOverlays).catch(error => {
     console.error('Error processing combine task:', error);
     const task = combineTasks.get(taskId);
     if (task) {
@@ -86,7 +86,9 @@ router.get('/:taskId', asyncHandler(async (req: Request, res: Response) => {
 async function processCombineTask(
   taskId: string,
   clipIds: number[],
-  outputFormat: string
+  outputFormat: string,
+  portrait: boolean = false,
+  textOverlays?: string[]
 ): Promise<void> {
   const task = combineTasks.get(taskId);
   if (!task) return;
@@ -152,7 +154,9 @@ async function processCombineTask(
     await combineClips({
       clipPaths: extractedClips,
       outputPath,
-      codec: 'reencode' // Use reencode for safety
+      codec: 'reencode', // Use reencode for safety
+      portrait,
+      textOverlays
     });
 
     // Clean up temp files

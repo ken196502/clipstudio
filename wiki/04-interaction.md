@@ -29,9 +29,9 @@ useEffect(() => {
 | Search | SYNAPTIC SEARCH | `search` |
 | Users | TARGET ENTITIES | `kol` |
 | Activity | PROCESS MONITOR | `task` |
-| Film | ASSET LIBRARY | `clip` |
+| Film | VERTICAL CLIPS | `clip` |
 
-> `combine` 页面不在导航栏中，只能通过 Lucky Combo 或其他程序跳转进入。
+> `combine` 页面不在导航栏中，通过 Clip Library 详情弹窗或其他页面跳转进入。
 
 **激活状态样式：**
 - 左侧 2px amber-500 边框
@@ -93,12 +93,7 @@ transition: { duration: 0.3 }
 
 **编辑弹窗（Dialog）：**
 - 触发：点击"CONFIG"按钮，`setEditingKol(kol)` 存入本地 state
-- 表单字段：Source URI、Cron Schedule、Classification Tags（逗号分隔）
-- Tags 的输入/输出转换：
-  ```ts
-  // 显示：tags.join(', ')
-  // 保存：value.split(',').map(s => s.trim())
-  ```
+- 表单字段：Source URI、Cron Schedule
 - 保存：调用 `updateKOL(editingKol.id, editingKol)`，关闭弹窗
 - 取消：直接 `setEditingKol(null)`
 
@@ -137,7 +132,7 @@ transition: { delay: idx * 0.05, duration: 0.3 }
 
 **详情弹窗：**
 - 左侧播放区：封面图 + 模拟播放控件（进度条固定 30%）
-- 右侧信息区：分类、来源、标题、摘要、关键词标签
+- 右侧信息区：来源、标题、时间段
 - 底部：COPY REF + EXTRACT 两个操作按钮
 
 ---

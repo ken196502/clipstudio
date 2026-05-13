@@ -7,9 +7,39 @@ export interface Segment {
 }
 
 /**
+ * Remove overlapping words between the end of prevText and start of currentText.
+ * Checks up to 3 words of overlap (mirrors the Python reference).
+ */
+export function removeOverlappingWords(prevText: string, currentText: string): string {
+  const prevWords = prevText.split(/\s+/);
+  const currWords = currentText.split(/\s+/);
+  if (prevWords.length === 0 || currWords.length === 0) return currentText;
+
+  const maxCheck = Math.min(3, prevWords.length, currWords.length);
+  let overlapCount = 0;
+
+  for (let i = 1; i <= maxCheck; i++) {
+    const prevEnd = prevWords.slice(-i).join(' ').toLowerCase();
+    const currStart = currWords.slice(0, i).join(' ').toLowerCase();
+    if (prevEnd === currStart) {
+      overlapCount = i;
+    }
+  }
+
+  if (overlapCount > 0) {
+    return currWords.slice(overlapCount).join(' ');
+  }
+  return currentText;
+}
+
+/**
  * Segment subtitles into logical chunks
  * Target length: 30-90 seconds
  * Split at sentence boundaries
+ *
+ * Note: subtitle deduplication / overlapping-word removal is now done
+ * in youtube.ts parseVTT (two-pass, mirroring the Python reference).
+ * This function only handles semantic segmentation.
  */
 export function segmentSubtitles(subtitles: SubtitleSegment[]): Segment[] {
   if (!subtitles || subtitles.length === 0) {
@@ -44,7 +74,7 @@ export function segmentSubtitles(subtitles: SubtitleSegment[]): Segment[] {
         continue;
       }
 
-      // Create segment
+      // Create segment with cleaned text
       const text = currentSegment.map(s => s.text).join(' ');
       segments.push({
         startSec: currentStart,
@@ -105,10 +135,20 @@ function shouldEndSegment(
 
 /**
  * Check if text ends with a sentence boundary
+ * 支持中英文标点、省略号、引号闭合
  */
 function isSentenceBoundary(text: string): boolean {
   const trimmed = text.trim();
-  return /[.!?。！？]$/.test(trimmed);
+  // 基本句子结束标点 + 省略号
+  if (!/[.!?。！？…]$/.test(trimmed)) {
+    return false;
+  }
+
+  // 检查引号是否闭合
+  const openQuotes = (trimmed.match(/[「"'【（《]/g) || []).length;
+  const closeQuotes = (trimmed.match(/[」"'】）》]/g) || []).length;
+
+  return openQuotes === closeQuotes;
 }
 
 /**
@@ -116,7 +156,8 @@ function isSentenceBoundary(text: string): boolean {
  */
 function isStrongSentenceBoundary(text: string): boolean {
   const trimmed = text.trim();
-  return /[.!?。！？]\s*$/.test(trimmed);
+  // 强句子边界：标点后有结束感
+  return /[.!?。！？…]\s*$/.test(trimmed) && isSentenceBoundary(text);
 }
 
 /**

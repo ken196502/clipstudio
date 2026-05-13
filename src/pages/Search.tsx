@@ -1,64 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAppStore } from '../store';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Search, Radar, Database, Zap, X, Cpu, GitMerge, Clapperboard } from 'lucide-react';
+import { Search, Radar, Database, Zap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { motion, AnimatePresence } from 'motion/react';
 
-const COMBO_STEPS = [
-  { text: 'ANALYZING SEMANTIC VECTORS...', icon: Cpu },
-  { text: 'ALIGNING TIMELINE FRAGMENTS...', icon: GitMerge },
-  { text: 'SYNTHESIZING COMPOSITION...', icon: Clapperboard },
-];
-
-function TypewriterText({ text }: { text: string }) {
-  const [displayedText, setDisplayedText] = useState('');
-
-  useEffect(() => {
-    let index = 0;
-    setDisplayedText('');
-    const timer = setTimeout(() => {
-      const interval = setInterval(() => {
-        setDisplayedText(text.slice(0, index + 1));
-        index++;
-        if (index >= text.length) {
-          clearInterval(interval);
-        }
-      }, 40);
-      return () => clearInterval(interval);
-    }, 400);
-
-    return () => clearTimeout(timer);
-  }, [text]);
-
-  return (
-    <span className="border-r-[3px] border-amber-500 pr-1 animate-pulse">
-      {displayedText}
-    </span>
-  );
-}
-
 export default function SearchPage() {
-  const { clips, setActivePage, searchClips, luckyCombo } = useAppStore();
+  const { clips, searchClips } = useAppStore();
   const [query, setQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [comboStep, setComboStep] = useState(-1);
   const [searchResults, setSearchResults] = useState<ReturnType<typeof useAppStore.getState>['clips']>([]);
-
-  useEffect(() => {
-    if (comboStep >= 0 && comboStep < COMBO_STEPS.length) {
-      const timer = setTimeout(() => {
-        setComboStep(s => s + 1);
-      }, 3000);
-      return () => clearTimeout(timer);
-    } else if (comboStep === COMBO_STEPS.length) {
-      setActivePage('combine');
-      setComboStep(-1);
-    }
-  }, [comboStep, setActivePage]);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,19 +26,6 @@ export default function SearchPage() {
       console.error('Search failed:', error);
     } finally {
       setIsSearching(false);
-    }
-  };
-
-  const handleLuckyCombo = async () => {
-    setComboStep(0);
-    try {
-      const selectedClips = await luckyCombo(query || 'AI technology');
-      // Store selected clips for Combine page
-      // In a real implementation, we'd save this to the store
-      console.log('Selected clips:', selectedClips);
-    } catch (error) {
-      console.error('Lucky combo failed:', error);
-      setComboStep(-1);
     }
   };
 
@@ -142,75 +83,7 @@ export default function SearchPage() {
           </div>
         </motion.form>
 
-        <motion.div layout className="flex items-center justify-center gap-6 mt-8 flex-wrap">
-          <Button
-            type="button"
-            onClick={handleLuckyCombo}
-            variant="outline"
-            className="h-9 border-amber-500 text-amber-500 hover:bg-amber-500 hover:text-zinc-950 px-6 rounded-sm uppercase tracking-widest text-xs font-bold font-display group transition-all duration-300 hover-fx hover-sweep hover:scale-105"
-          >
-            <Zap className="w-4 h-4 mr-2 group-hover-wiggle" />
-            LUCKY COMBO
-          </Button>
-        </motion.div>
       </motion.div>
-
-      <AnimatePresence>
-        {comboStep >= 0 && (
-          <motion.div 
-            initial={{ opacity: 0, backdropFilter: 'blur(0px)' }}
-            animate={{ opacity: 1, backdropFilter: 'blur(12px)' }}
-            exit={{ opacity: 0, backdropFilter: 'blur(0px)' }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/90"
-          >
-            {/* Background grid */}
-            <div className="absolute inset-0 bg-[linear-gradient(rgba(245,158,11,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(245,158,11,0.05)_1px,transparent_1px)] bg-[size:64px_64px] pointer-events-none" />
-            
-            <Button 
-              variant="ghost" 
-              className="absolute top-8 right-8 text-zinc-500 hover:text-amber-500 hover:bg-amber-500/10 rounded-sm"
-              onClick={() => setComboStep(-1)}
-            >
-              <X className="w-6 h-6" />
-            </Button>
-
-            <div className="relative w-full max-w-2xl h-80 flex items-center justify-center overflow-hidden">
-              <AnimatePresence mode="wait">
-                {comboStep < COMBO_STEPS.length && (
-                  <motion.div
-                    key={comboStep}
-                    initial={{ opacity: 0, x: 200, scale: 0.9 }}
-                    animate={{ opacity: 1, x: 0, scale: 1 }}
-                    exit={{ opacity: 0, x: -200, scale: 0.9 }}
-                    transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                    className="flex flex-col items-center gap-8"
-                  >
-                    {/* Rotating Icon */}
-                    <div className="relative">
-                      <div className="absolute inset-0 bg-amber-500/20 blur-3xl rounded-full" />
-                      <motion.div
-                        animate={{ rotate: 360 }}
-                        transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
-                        className="relative z-10"
-                      >
-                        {(() => {
-                          const Icon = COMBO_STEPS[comboStep].icon;
-                          return <Icon className="w-24 h-24 text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.8)]" strokeWidth={1.5} />;
-                        })()}
-                      </motion.div>
-                    </div>
-
-                    {/* Typewriter text */}
-                    <div className="h-8 font-mono text-xl md:text-2xl text-amber-500 font-bold uppercase tracking-[0.2em] drop-shadow-[0_0_8px_rgba(245,158,11,0.5)] flex items-center justify-center">
-                      <TypewriterText text={COMBO_STEPS[comboStep].text} />
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {hasSearched && (
@@ -264,7 +137,7 @@ export default function SearchPage() {
                       
                       <div className="flex-1 flex flex-col justify-center font-sans">
                         <div className="flex items-center justify-between mb-1.5 font-mono text-[10px] uppercase tracking-widest font-bold text-zinc-600">
-                          <span>SRC: {clip.kolName} // CAT: {clip.topicCategory}</span>
+                          <span>SRC: {clip.kolName}</span>
                           <span>{clip.createdAt}</span>
                         </div>
                         
@@ -273,7 +146,7 @@ export default function SearchPage() {
                         </h3>
                         
                         <p className="text-xs text-zinc-400 line-clamp-2">
-                          {clip.summary}
+                          {clip.videoTitle}
                         </p>
                       </div>
                     </div>

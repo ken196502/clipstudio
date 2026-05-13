@@ -3,6 +3,7 @@ import { useAppStore, Clip } from '../store';
 import { Button } from '@/components/ui/button';
 import { Radar, MoveRight, Layers, Clapperboard, Trash2, ArrowRight, Download, Loader2 } from 'lucide-react';
 import { motion, Reorder, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 
 interface CombineTask {
   taskId: string;
@@ -19,6 +20,8 @@ export default function CombinePage() {
   const [timeline, setTimeline] = useState<Clip[]>(clips.slice(0, 5));
   const [combineTask, setCombineTask] = useState<CombineTask | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [portraitMode, setPortraitMode] = useState(true);
+  const [textOverlays, setTextOverlays] = useState<Record<number, string>>({});
 
   const removeClip = (id: number) => {
     setTimeline(t => t.filter(c => c.id !== id));
@@ -26,18 +29,21 @@ export default function CombinePage() {
 
   const handleCombine = async () => {
     if (timeline.length === 0) {
-      alert('Please add clips to the timeline first');
+      toast.error('Please add clips to the timeline first');
       return;
     }
 
     try {
+      const overlays = timeline.map(c => textOverlays[c.id] || c.title || '');
       const response = await fetch('/api/combine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clipIds: timeline.map(c => c.id),
           outputFormat: 'mp4',
-          resolution: '1080p'
+          resolution: '1080p',
+          portrait: portraitMode,
+          textOverlays: overlays
         })
       });
 
@@ -48,9 +54,10 @@ export default function CombinePage() {
       const data = await response.json();
       setCombineTask(data);
       setIsPolling(true);
+      toast.success('Combine task started');
     } catch (error) {
       console.error('Error starting combine task:', error);
-      alert('Failed to start combine task. Please try again.');
+      toast.error('Failed to start combine task. Please try again.');
     }
   };
 
@@ -93,6 +100,20 @@ export default function CombinePage() {
         <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest mt-2">
           Drag and drop to reorder clips. Extract as a new composite video.
         </p>
+      </div>
+
+      <div className="flex-none mb-4 flex items-center gap-4">
+        <label className="flex items-center gap-2 text-zinc-400 font-mono text-xs uppercase tracking-widest cursor-pointer">
+          <input
+            type="checkbox"
+            checked={portraitMode}
+            onChange={(e) => setPortraitMode(e.target.checked)}
+            className="w-4 h-4 accent-amber-500"
+          />
+          Portrait (9:16)
+        </label>
+        <span className="text-zinc-600 font-mono text-xs">|</span>
+        <span className="text-zinc-500 font-mono text-xs">{timeline.length} clips selected</span>
       </div>
 
       <div className="flex-1 flex flex-col justify-center min-h-0 bg-zinc-950/50 border border-zinc-800 rounded-sm relative overflow-hidden backdrop-blur-sm">
@@ -141,7 +162,16 @@ export default function CombinePage() {
                       <h3 className="text-xs font-display font-bold text-zinc-200 line-clamp-2 leading-tight uppercase group-hover:text-amber-400 transition-colors">
                         {clip.title}
                       </h3>
-                      
+                      {portraitMode && (
+                        <input
+                          type="text"
+                          value={textOverlays[clip.id] || ''}
+                          onChange={(e) => setTextOverlays(prev => ({ ...prev, [clip.id]: e.target.value }))}
+                          placeholder="Top text overlay..."
+                          className="mt-2 w-full bg-zinc-800/60 border border-zinc-700 rounded-sm px-2 py-1 text-[10px] text-zinc-300 font-mono focus:border-amber-500 focus:outline-none"
+                          onPointerDown={(e) => e.stopPropagation()}
+                        />
+                      )}
                       <div className="mt-auto flex items-center gap-2">
                         <div className="flex-1 h-1 bg-zinc-800 rounded-full overflow-hidden">
                           <div className="h-full bg-amber-500/50 w-full" />

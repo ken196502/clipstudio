@@ -3,12 +3,12 @@ import { useAppStore } from './store';
 import { Users, Activity, Film, Search as SearchIcon, Scissors, ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import { Toaster } from 'sonner';
 import KOLManager from './pages/KOLManager';
 import TaskMonitor from './pages/TaskMonitor';
 import ClipLibrary from './pages/ClipLibrary';
 import SearchPage from './pages/Search';
 
-import CombinePage from './pages/Combine';
 
 export default function Layout() {
   const { activePage, setActivePage } = useAppStore();
@@ -19,23 +19,32 @@ export default function Layout() {
     root.classList.add('dark');
   }, []);
 
-  useEffect(() => {
-    if (activePage === 'combine') {
-      setIsSidebarOpen(false);
-    } else {
-      setIsSidebarOpen(true);
-    }
-  }, [activePage]);
 
   const navItems = [
     { id: 'search', label: 'SYNAPTIC SEARCH', icon: SearchIcon },
     { id: 'kol', label: 'TARGET ENTITIES', icon: Users },
     { id: 'task', label: 'PROCESS MONITOR', icon: Activity },
-    { id: 'clip', label: 'ASSET LIBRARY', icon: Film },
+    { id: 'clip', label: 'VERTICAL CLIPS', icon: Film },
   ] as const;
 
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans selection:bg-cyan-500/30">
+      <Toaster 
+        position="top-right" 
+        theme="dark"
+        toastOptions={{
+          style: {
+            background: '#18181b',
+            border: '1px solid #27272a',
+            color: '#f4f4f5',
+          },
+          classNames: {
+            error: 'border-rose-500/50',
+            success: 'border-emerald-500/50',
+            warning: 'border-amber-500/50',
+          }
+        }}
+      />
       {/* Sidebar */}
       <motion.aside 
         initial={false}
@@ -195,7 +204,6 @@ export default function Layout() {
               {activePage === 'kol' && <KOLManager />}
               {activePage === 'task' && <TaskMonitor />}
               {activePage === 'clip' && <ClipLibrary />}
-              {activePage === 'combine' && <CombinePage />}
             </motion.div>
           </AnimatePresence>
         </div>

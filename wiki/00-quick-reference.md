@@ -11,8 +11,8 @@
 | 搜索页面 | `src/pages/Search.tsx` |
 | KOL 管理 | `src/pages/KOLManager.tsx` |
 | 任务监控 | `src/pages/TaskMonitor.tsx` |
-| 片段库 | `src/pages/ClipLibrary.tsx` |
 | 视频合成 | `src/pages/Combine.tsx` |
+| 片段库 | `src/pages/ClipLibrary.tsx` |
 | 全局布局 | `src/Layout.tsx` |
 | 状态管理 | `src/store.ts` |
 | 全局样式 | `src/index.css` |
@@ -69,7 +69,6 @@
   name: string;              // "李自然"
   channel_url: string;       // "youtube.com/@liziran"
   platform: string;          // "youtube"
-  tags: string[];            // ["AI", "科技"]
   fetch_policy: {
     cron?: string;           // "0 3 * * *"
     max_videos?: number;     // 20
@@ -101,13 +100,17 @@
   kolName: string;
   thumbnail: string;         // URL
   title: string;             // AI 生成
-  summary: string;           // AI 生成
-  keywords: string[];        // AI 生成
   startSec: number;
   endSec: number;
-  topicCategory: string;     // "观点|分析|教程"
+  subtitles?: SubtitleSegment[];  // 该片段的字幕（带时间戳）
   createdAt: string;         // "2024-05-20"
   relevance?: number;        // 搜索时的相关度 0-100
+}
+
+interface SubtitleSegment {
+  start: number;             // 字幕开始时间（秒）
+  end: number;               // 字幕结束时间（秒）
+  text: string;              // 字幕文本
 }
 ```
 
@@ -133,20 +136,24 @@ POST   /api/jobs/:id/retry       # 重试失败任务
 
 ### 片段管理
 ```
-GET    /api/clips?kolName=xxx&category=xxx  # 获取片段列表
+GET    /api/clips?kolName=xxx&sort=newest    # 获取片段列表
 POST   /api/clips/search                    # 关键词相关度评分搜索
+```
+
+### 垂直视频渲染
+```
+POST   /api/clips/vertical-render   # 提交垂直渲染任务
+Body: { "clipId": 1 }
+GET    /api/clips/vertical-render/:jobId   # 查询渲染进度及结果
+GET    /api/clips/vertical-download/:filename   # 下载渲染后的竖屏视频
 ```
 
 ### 视频合成
 ```
-POST   /api/combine           # 提交合成任务 (异步下载+剪辑+拼接)
-GET    /api/combine/:taskId   # 查询合成进度及结果
-```
-
-### Lucky Combo
-```
-POST   /api/lucky-combo       # 智能选片 (基于关键词评分)
-Body: { "prompt": "制作 AI 教程视频" }
+POST   /api/combine   # 提交视频合成任务
+Body: { "clipIds": [1,2,3], "portrait": true, "textOverlays": [...] }
+GET    /api/combine/:taskId   # 查询合成进度
+GET    /api/combine/download/:filename   # 下载合成后的视频
 ```
 
 ---
@@ -166,7 +173,6 @@ cd server && npm run dev
 ```bash
 cd server
 npm run db:init  # 初始化 SQLite 数据库
-npm run db:seed  # 填充测试数据 (李自然/硅谷徐)
 npm test         # 运行后端 API 集成测试
 ```
 
@@ -245,24 +251,26 @@ console.log('API Response:', await response.json());
 }
 ```
 
-### 后端依赖（待安装）
+### 后端依赖
 ```json
 {
   "express": "^4.21.2",
-  "better-sqlite3": "^9.0.0",
-  "bull": "^4.12.0",
+  "better-sqlite3": "^11.8.1",
   "node-cron": "^3.0.3",
   "cron-parser": "^4.9.0",
-  "openai": "^4.0.0",
-  "youtubei.js": "^10.0.0"
+  "openai": "^4.80.1",
+  "puppeteer-core": "^24.43.0",
+  "ws": "^8.20.0",
+  "uuid": "^11.0.3",
+  "express-rate-limit": "^8.4.1"
 }
 ```
 
 ### 系统依赖
 - Node.js 18+
-- Redis 6+
 - FFmpeg 4.4+
 - yt-dlp 2023+
+- Rust（用于 Tauri 打包，可选）
 
 ---
 
@@ -271,8 +279,8 @@ console.log('API Response:', await response.json());
 | stage 值 | 展示标签 | 说明 |
 |----------|----------|------|
 | `crawl` | AWAITING_METADATA | 抓取视频元数据 + 字幕 |
-| `process` | SEGMENT_STREAM | 字幕分段处理 |
-| `clip` | EXTRACT_HIGHLIGHTS | LLM 分析生成片段 |
+| `process` | SEGMENT_STREAM | 验证字幕可解析 |
+| `clip` | EXTRACT_HIGHLIGHTS | LLM 切分片段（title + 时间段） |
 | `index` | VECTOR_INDEXING | 保存到数据库 + 向量索引 |
 
 ---
@@ -284,16 +292,16 @@ console.log('API Response:', await response.json());
 | `search` | `Search.tsx` | SYNAPTIC SEARCH |
 | `kol` | `KOLManager.tsx` | TARGET ENTITIES |
 | `task` | `TaskMonitor.tsx` | PROCESS MONITOR |
-| `clip` | `ClipLibrary.tsx` | ASSET LIBRARY |
+| `clip` | `ClipLibrary.tsx` | VERTICAL CLIPS |
 | `combine` | `Combine.tsx` | ASSET COMBINER |
 
 ---
 
 ## 📞 快速链接
 
-- **AI Studio App:** https://ai.studio/apps/f86bdbb0-4ca6-4cf8-a94f-31495ffa83d6
 - **OpenAI API 文档:** https://platform.openai.com/docs/api-reference
 - **FFmpeg 文档:** https://ffmpeg.org/documentation.html
 - **yt-dlp 文档:** https://github.com/yt-dlp/yt-dlp
 - **Tailwind CSS:** https://tailwindcss.com/docs
 - **Framer Motion:** https://www.framer.com/motion/
+- **Tauri 文档:** https://tauri.app/v1/guides/

@@ -3,8 +3,10 @@ import cronParser from 'cron-parser';
 import { db } from '../db/init';
 import { processJob } from './job-processor';
 import { notifyJobsChanged } from './job-broadcast';
+import { renderVerticalVideo, getVerticalVideoPath } from './vertical-renderer';
 
 let schedulerTask: cron.ScheduledTask | null = null;
+let verticalRenderInProgress = false;
 
 /**
  * True when the latest scheduled occurrence is strictly after effectiveLastTs and not in the future.
@@ -112,6 +114,81 @@ async function checkAndTriggerJobs(): Promise<void> {
 }
 
 /**
+ * Batch pre-render vertical videos for clips that don't have them yet.
+ * Runs in the background so users don't wait when clicking download.
+ */
+async function preRenderVerticalVideos(): Promise<void> {
+  if (verticalRenderInProgress) {
+    console.log('[Scheduler] Vertical pre-render already in progress, skipping');
+    return;
+  }
+
+  try {
+    verticalRenderInProgress = true;
+
+    // Find clips without vertical_cover or whose file doesn't exist
+    const clips = db.prepare(`
+      SELECT c.id, c.video_id, c.kol_name, c.start_sec, c.end_sec, c.title, c.thumbnail, c.subtitles
+      FROM clips c
+      WHERE c.vertical_cover IS NULL
+         OR NOT EXISTS (
+           SELECT 1 FROM clips c2
+           WHERE c2.id = c.id
+           AND c2.vertical_cover LIKE '%vertical-covers%'
+         )
+      ORDER BY c.created_at DESC
+      LIMIT 5
+    `).all() as any[];
+
+    if (clips.length === 0) {
+      return;
+    }
+
+    console.log(`[Scheduler] Pre-rendering ${clips.length} vertical videos...`);
+
+    for (const clip of clips) {
+      // Double-check file doesn't already exist on disk
+      const existingPath = getVerticalVideoPath(clip.id);
+      if (existingPath) {
+        // Update database if file exists but DB record is missing
+        try {
+          const fileName = `clip-${clip.id}-vertical.mp4`;
+          db.prepare('UPDATE clips SET vertical_cover = ? WHERE id = ?').run(
+            `/api/vertical-covers/${fileName}`,
+            clip.id
+          );
+          console.log(`[Scheduler] Updated DB for existing vertical video: clip ${clip.id}`);
+        } catch (e) {
+          console.error(`[Scheduler] Failed to update DB for clip ${clip.id}:`, e);
+        }
+        continue;
+      }
+
+      try {
+        console.log(`[Scheduler] Pre-rendering vertical video for clip ${clip.id}...`);
+        await renderVerticalVideo({
+          id: clip.id,
+          video_id: clip.video_id,
+          kol_name: clip.kol_name,
+          start_sec: clip.start_sec,
+          end_sec: clip.end_sec,
+          title: clip.title,
+          thumbnail: clip.thumbnail,
+          subtitles: clip.subtitles ? JSON.parse(clip.subtitles) : undefined,
+        });
+        console.log(`[Scheduler] Pre-rendered vertical video for clip ${clip.id}`);
+      } catch (error) {
+        console.error(`[Scheduler] Failed to pre-render vertical video for clip ${clip.id}:`, error);
+      }
+    }
+  } catch (error) {
+    console.error('[Scheduler] Error in preRenderVerticalVideos:', error);
+  } finally {
+    verticalRenderInProgress = false;
+  }
+}
+
+/**
  * Start the scheduler
  */
 export function startScheduler(): void {
@@ -125,6 +202,11 @@ export function startScheduler(): void {
   // Run every minute
   schedulerTask = cron.schedule('* * * * *', async () => {
     await checkAndTriggerJobs();
+    // Also trigger vertical video pre-rendering in background
+    preRenderVerticalVideos().catch(error => {
+      console.error('[Scheduler] Error in preRenderVerticalVideos:', error);
+      verticalRenderInProgress = false;
+    });
   });
 
   console.log('[Scheduler] Scheduler started (runs every minute)');

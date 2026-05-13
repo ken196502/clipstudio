@@ -2,6 +2,8 @@
 
 > **ENGINE_VEC** 是一个面向内容创作者的 AI 驱动视频片段管理平台。它通过 YouTube 链接自动提取英文字幕，使用 LLM 分析生成关键片段（clips），支持语义搜索和智能组合，最终合成新视频。
 
+> **项目类型：** 本地桌面应用（非 SaaS）
+
 ---
 
 ## 📚 文档导航
@@ -36,7 +38,7 @@
        ↓
 Asset Library（片段库）
        ↓
-用户搜索 / Lucky Combo 智能选片
+用户搜索 / 垂直视频生成
        ↓
 拖拽排序 → FFmpeg 合成新视频
 ```
@@ -78,7 +80,7 @@ Asset Library（片段库）
 
 #### 4. 搜索与组合
 - **关键词搜索**：通过相关度评分检索片段
-- **Lucky Combo**：基于 Prompt 自动挑选 Top 5 片段
+- **垂直渲染**：生成带标题和字幕的 9:16 竖屏视频
 - **视频合成**：使用 FFmpeg 精确剪辑并重编码合成
 
 ---
@@ -119,7 +121,7 @@ npm run dev:all  # 如果 package.json 配置了 concurrently
 | Synaptic Search | `search` | ✅ 已完成 | ✅ 已完成 |
 | Target Entities | `kol` | ✅ 已完成 | ✅ 已完成 |
 | Process Monitor | `task` | ✅ 已完成 | ✅ 已完成 |
-| Asset Library | `clip` | ✅ 已完成 | ✅ 已完成 |
+| Vertical Clips | `clip` | ✅ 已完成 | ✅ 已完成 |
 | Asset Combiner | `combine` | ✅ 已完成 | ✅ 已完成 |
 
 ---
@@ -164,16 +166,18 @@ npm run dev:all  # 如果 package.json 配置了 concurrently
 ### 🚧 进行中
 - [ ] 本地开发流程验证
 
+### 🎉 v0.2 版本更新内容
+
 ### 📝 待开发（优化）
 - [ ] 性能优化（缓存、索引）
 - [ ] 错误处理与日志
 
 ### 🐛 已知问题（前端）
-1. **筛选功能未实现** — Clip Library 的下拉框不过滤结果
-2. **Add Entity 按钮无响应** — KOL Manager 的添加功能未实现
-3. **搜索结果为硬编码** — Search 页面不根据查询词返回结果
-4. **任务进度不更新** — Task Monitor 的进度条固定不动
-5. **合成按钮无响应** — Combine 页面的导出功能未实现
+1. ✅ **筛选功能已实现** — Clip Library 支持按 KOL 和排序筛选
+2. ✅ **Add Entity 已实现** — KOL Manager 添加功能已连接后端 API
+3. ✅ **搜索已连接后端** — Search 页面根据查询词返回真实结果
+4. ✅ **任务进度实时更新** — Task Monitor 通过 WebSocket 实时更新
+5. ✅ **垂直渲染已完成** — Clip Library 支持竖屏视频预览和下载
 
 详见 [05-qa.md](./05-qa.md)
 
@@ -185,12 +189,12 @@ npm run dev:all  # 如果 package.json 配置了 concurrently
 | Phase 1 | 后端基础架构 | ✅ 已完成 | 100% |
 | Phase 2 | 视频抓取流水线 | ✅ 已完成 | 100% |
 | Phase 3 | 搜索功能 | ✅ 已完成 | 100% |
-| Phase 4 | Lucky Combo | ✅ 已完成 | 100% |
+| Phase 4 | Asset Combiner (视频合成) | ✅ 已完成 | 100% |
 | Phase 5 | 视频合成 | ✅ 已完成 | 100% |
+| Phase 6 | 定时任务 | ✅ 已完成 | 100% |
+| Phase 7 | 本地打包部署 | ⏳ 待开始 | 0% |
 
-**总体进度：** 85%（前端完成，后端核心功能完成，视频合成完成）
-
-**预计完成时间：** 10-15 周
+**总体进度：** 85%（前端完成，后端核心功能完成，视频合成完成，定时任务完成）
 
 详见 [07-implementation-roadmap.md](./07-implementation-roadmap.md)
 
@@ -202,7 +206,7 @@ npm run dev:all  # 如果 package.json 配置了 concurrently
 2. ✅ **Add Entity 按钮已实现** — KOL Manager 的添加功能已连接后端 API
 3. ✅ **搜索结果已连接后端** — Search 页面现在根据查询词返回结果
 4. ✅ **任务进度已实现轮询** — Task Monitor 的进度条会实时更新
-5. ✅ **合成按钮已实现** — Combine 页面的导出功能已集成 FFmpeg
+5. ✅ **垂直渲染已完成** — Clip Library 的垂直预览和下载功能已集成 Puppeteer
 
 详见 [05-qa.md](./05-qa.md)
 
@@ -210,8 +214,6 @@ npm run dev:all  # 如果 package.json 配置了 concurrently
 
 ## 📞 联系与贡献
 
-- **项目类型：** AI Studio App
-- **AI Studio URL：** https://ai.studio/apps/f86bdbb0-4ca6-4cf8-a94f-31495ffa83d6
-- **开发周期：** 预计 10-15 周完成全部功能
+- **项目类型：** 本地桌面应用（非 SaaS）
 
 **下一步行动：** 参考 [07-implementation-roadmap.md](./07-implementation-roadmap.md) 开始本地开发流程验证

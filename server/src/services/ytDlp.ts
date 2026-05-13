@@ -31,13 +31,28 @@ export async function runYtDlp(args: string[]): Promise<YtDlpRunResult> {
   console.log(`[yt-dlp] bin=${ytDlpBin}`);
   console.log(`[yt-dlp] args=${JSON.stringify(args)}`);
 
+  // Auto-inject cookies from browser if available and not already present
+  const hasCookies = args.some(a => a.startsWith('--cookies'));
+  const extraArgs: string[] = [];
+  if (!hasCookies) {
+    const browser = process.env.YT_DLP_COOKIES_BROWSER;
+    if (browser) {
+      extraArgs.push('--cookies-from-browser', browser);
+    }
+  }
+
   return await new Promise((resolve, reject) => {
-    const child = spawn(ytDlpBin, args, {
+    const TIMEOUT_MS = 60 * 1000;
+    const child = spawn(ytDlpBin, [...extraArgs, ...args], {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let stdout = '';
     let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`yt-dlp timeout after ${TIMEOUT_MS}ms`));
+    }, TIMEOUT_MS);
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
@@ -52,6 +67,7 @@ export async function runYtDlp(args: string[]): Promise<YtDlpRunResult> {
     });
 
     child.on('close', (code) => {
+      clearTimeout(timer);
       if (code === 0) {
         resolve({ stdout, stderr });
         return;

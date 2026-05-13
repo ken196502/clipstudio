@@ -1,11 +1,11 @@
-# 06 — 后端设计（待实现）
+# 06 — 后端设计
 
 ## 系统架构概览
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         Frontend (React)                         │
-│  Search → KOL Manager → Task Monitor → Clip Library → Combine   │
+│  Search → KOL Manager → Task Monitor → Clip Library   │
 └────────────────────────────┬────────────────────────────────────┘
                              │ REST API
 ┌────────────────────────────▼────────────────────────────────────┐
@@ -43,9 +43,9 @@
        ↓
 [crawl] 抓取频道最新视频列表 + 提取字幕
        ↓
-[process] 字幕分段 + 时间戳对齐
+[process] 验证字幕可解析
        ↓
-[clip] LLM 分析生成片段（每个视频生成多个 clips）
+[clip] LLM 根据完整字幕切分片段（title + start_sec + end_sec）
        ↓
 [index] 保存到数据库 + 生成向量索引
        ↓
@@ -57,11 +57,12 @@
 **输入：** KOL 的频道 URL（如 `youtube.com/@liziran`）+ 抓取策略（`fetch_policy`）
 
 **处理步骤：**
-1. 使用 **yt-dlp** 获取频道的最新视频列表（支持批量获取 JSON 元数据）
+1. 使用 **yt-dlp**（通过 Python venv 调用）获取频道的最新视频列表（`--flat-playlist --dump-json`）
 2. 根据 `fetch_policy.max_videos` 限制抓取数量（默认 20 个）
 3. 对每个视频：
    - 获取元数据：标题、时长、缩略图、发布日期
-   - 提取字幕：优先提取手动上传的英文字幕，若无则提取自动生成的字幕（`writeAutoSub: true`）
+   - 提取字幕：优先提取手动上传的英文字幕，若无则提取自动生成的字幕（`--write-sub --write-auto-sub --sub-lang en`）
+   - 解析 VTT 格式字幕，清理 HTML 标签和内联时间戳
 4. 过滤已处理过的视频（检查数据库 `videos` 表）
 
 **输出：**
@@ -83,40 +84,46 @@
 ```
 
 **依赖库：**
-- **youtube-dl-exec** (`yt-dlp`) — 强大的视频下载与元数据提取工具
+- **yt-dlp**（Python venv 安装）— 视频下载与元数据提取
 - **FFmpeg** — 视频切片与合成的核心引擎
 
 ---
 
-#### Stage 3: clip（AI 分析）
+#### Stage 3: clip（LLM 切分）
 
-**输入：** 分段后的文本片段
+**输入：** 完整视频字幕（带时间戳的 JSON 数组）
 
 **LLM 调用：** 使用 OpenAI 兼容 API
 
-**Fallback 机制：**
-为了保证流水线的稳定性，若 LLM API 调用失败（如 Token 过期、网络问题），系统会自动进入 **Fallback 模式**：
-- 标题：取原视频标题的前 50 个字符
-- 摘要：取片段文本的前 150 个字符
-- 关键词：使用 KOL 名称 + "Video" 作为默认标签
-- 分类：默认为 "analysis"
+**核心职责：**
+LLM 只负责一件事：把完整字幕切成若干个有独立主题的片段，每个片段返回 `title` + `start_sec` + `end_sec`。
 
-这样可以确保即使 AI 服务暂时不可用，用户依然能完成视频的下载和剪辑流程。
+**错误处理（严格模式）：**
+- LLM API 调用失败（如 503、网络问题）→ **直接报错，任务失败**
+- LLM 返回空 clips 或无效数据 → **直接报错，任务失败**
+- 标题质量不合格（空洞、过短、纯时间戳格式）→ **直接报错，任务失败**
+- 时间段超出视频范围 → **直接报错，任务失败**
+
+**不存在 Fallback 机制。** 系统坚持"宁缺毋滥"原则：LLM 失败时不生成低质量片段，而是让任务失败，等待人工排查或重试。
 
 ---
 
 ## 视频处理逻辑
 
 ### 1. 视频下载 (Downloader)
-使用 `yt-dlp` 下载最佳质量的视频流。下载后的文件存储在 `storage/videos/{videoId}.mp4`。
+使用 `yt-dlp` 下载最佳质量的视频流。下载后的文件存储在 `storage/clips/{videoId}.mp4`。
 
 ### 2. 片段切分 (FFmpeg)
 根据数据库中记录的 `start_sec` 和 `end_sec`，使用 FFmpeg 进行精确切分。
 - 策略：使用 `reencode`（重编码）以确保片段的时间戳和关键帧对齐。
 
-### 3. 视频合成 (Combine)
-将用户选中的多个片段路径写入 `concat.txt`，调用 FFmpeg 的 `concat` 协议进行合并。
-- 策略：同样使用 `reencode` 保证不同来源视频合并后的播放兼容性。
+### 3. 垂直视频渲染
+使用 **Puppeteer** 截图 HTML/CSS 模板生成标题和字幕覆盖层 PNG，再用 **FFmpeg** `filter_complex` 合成到视频上。
+- 支持 9:16 竖屏格式（1080×1920）
+- 背景为模糊视频填充，中间为原视频
+- 顶部显示标题覆盖层，底部显示逐句字幕
+- 支持批量预渲染（调度器后台自动渲染）
+- 输出文件：`storage/vertical-videos/clip-{id}-vertical.mp4`
 
 ---
 
@@ -153,7 +160,6 @@ CREATE TABLE kols (
   name TEXT NOT NULL,
   channel_url TEXT NOT NULL,
   platform TEXT DEFAULT 'youtube',
-  tags TEXT,  -- JSON 数组字符串
   fetch_policy TEXT,  -- JSON 对象字符串: { "cron": "0 3 * * *", "max_videos": 20 }
   active INTEGER DEFAULT 1,
   last_run DATETIME,  -- 最后一次执行时间
@@ -186,11 +192,9 @@ CREATE TABLE clips (
   start_sec INTEGER NOT NULL,
   end_sec INTEGER NOT NULL,
   title TEXT NOT NULL,
-  summary TEXT,
-  keywords TEXT,  -- JSON 数组字符串
-  topic_category TEXT,
   thumbnail TEXT,
-  embedding_vector BLOB,  -- 向量数据（可选）
+  vertical_cover TEXT,
+  subtitles TEXT,  -- JSON 数组字符串 [{start,end,text},...] 用于渲染
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (video_id) REFERENCES videos(id)
 );
@@ -230,7 +234,6 @@ CREATE TABLE jobs (
       "name": "李自然",
       "channel_url": "youtube.com/@liziran",
       "platform": "youtube",
-      "tags": ["AI", "科技"],
       "fetch_policy": { "cron": "0 3 * * *" },
       "active": 1,
       "nextRun": "今日 03:00"
@@ -247,7 +250,6 @@ CREATE TABLE jobs (
 {
   "name": "新 KOL",
   "channel_url": "youtube.com/@example",
-  "tags": ["标签1", "标签2"],
   "fetch_policy": { "cron": "0 4 * * *", "max_videos": 10 }
 }
 ```
@@ -377,83 +379,81 @@ const results = clips.map(clip => ({
 
 ---
 
-### 视频合成
+### 垂直视频渲染
 
-#### POST /api/combine
-提交合成任务
+#### POST /api/clips/vertical-render
+提交竖屏渲染任务
 
 **Request:**
 ```json
 {
-  "clipIds": [1, 3, 5, 7],
-  "outputFormat": "mp4",
-  "resolution": "1080p"
+  "clipId": 1
 }
 ```
 
 **Response:**
 ```json
 {
-  "taskId": "combine-uuid",
-  "status": "processing",
-  "estimatedTime": 120  // 秒
+  "jobId": 1,
+  "status": "pending"
 }
 ```
 
-#### GET /api/combine/:taskId
-查询合成进度
+#### GET /api/clips/vertical-render/:jobId
+查询渲染进度
 
 **Response:**
 ```json
 {
-  "taskId": "combine-uuid",
+  "jobId": 1,
+  "clipId": 1,
   "status": "completed",
   "progress": 100,
-  "downloadUrl": "/downloads/combined-video.mp4"
+  "outputPath": "/api/vertical-covers/clip-1-vertical.mp4"
 }
 ```
+
+#### GET /api/clips/vertical-download/:filename
+下载渲染后的竖屏视频
 
 ---
 
-## 视频合成实现
+## 垂直视频渲染实现
 
-使用 **FFmpeg** 进行视频拼接：
+使用 **Puppeteer** 截图 + **FFmpeg** `filter_complex` 合成：
 
-```bash
-# 1. 下载原视频片段（如果未缓存）
-yt-dlp -f best "https://youtube.com/watch?v=VIDEO_ID" -o "video_%(id)s.mp4"
+**核心渲染流程（`server/src/services/vertical-renderer.ts`）：**
+```ts
+async function renderVerticalVideo(clip: ClipData): Promise<string> {
+  // 1. 下载视频片段（yt-dlp --download-sections）
+  const segmentPath = await downloadSegment(clip.video_id, clip.start_sec, clip.end_sec);
 
-# 2. 按时间戳切割片段
-ffmpeg -i video_VIDEO_ID.mp4 -ss 00:00:45 -to 00:01:32 -c copy clip_1.mp4
-ffmpeg -i video_VIDEO_ID.mp4 -ss 00:03:20 -to 00:04:15 -c copy clip_2.mp4
+  // 2. 用 Puppeteer 渲染标题 PNG 覆盖层
+  const titlePng = await renderTitleOverlay(clip.id, clip.title);
 
-# 3. 生成拼接列表
-echo "file 'clip_1.mp4'" > concat_list.txt
-echo "file 'clip_2.mp4'" >> concat_list.txt
+  // 3. 用 Puppeteer 逐句渲染字幕 PNG 覆盖层
+  const subtitleOverlays = await renderSubtitleOverlays(clip.id, preparedSubs);
 
-# 4. 合并视频
-ffmpeg -f concat -safe 0 -i concat_list.txt -c copy output.mp4
+  // 4. FFmpeg filter_complex 合成：
+  //    - 背景：视频放大+模糊，撑满 1080×1920
+  //    - 中间：原视频保持比例居中
+  //    - 顶部：标题覆盖层
+  //    - 底部：字幕覆盖层（按时间 enable）
+  const filterComplex = buildFilterComplex(...);
+  await runFFmpeg(ffmpegArgs);
+
+  // 5. 更新数据库 vertical_cover 字段
+  db.prepare('UPDATE clips SET vertical_cover = ? WHERE id = ?');
+}
 ```
 
-**Node.js 封装：**
+**合成页面（`Combine`）视频拼接：**
 ```ts
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { combineClips } from './services/ffmpeg';
 
-const execAsync = promisify(exec);
-
-async function combineClips(clips: Clip[], outputPath: string) {
-  // 1. 下载并切割片段
-  for (const clip of clips) {
-    await execAsync(`ffmpeg -i ${clip.videoPath} -ss ${clip.startSec} -to ${clip.endSec} -c copy ${clip.id}.mp4`);
-  }
-  
-  // 2. 生成拼接列表
-  const concatList = clips.map(c => `file '${c.id}.mp4'`).join('\n');
-  await fs.writeFile('concat_list.txt', concatList);
-  
-  // 3. 合并
-  await execAsync(`ffmpeg -f concat -safe 0 -i concat_list.txt -c copy ${outputPath}`);
+async function combineClips(options: CombineClipsOptions): Promise<string> {
+  // Portrait 模式：每个片段单独处理 filter_complex（模糊背景+文字覆盖），再 concat
+  // Landscape 模式：直接用 concat demuxer 拼接
 }
 ```
 
@@ -487,70 +487,106 @@ MAX_VIDEO_SIZE_MB=500
 
 ### Cron 调度器
 
-使用 **node-cron** 实现定时抓取：
+使用 **node-cron** 实现定时抓取（`server/src/services/scheduler.ts`）：
 
 ```ts
 import cron from 'node-cron';
-import { db } from './db';
+import cronParser from 'cron-parser';
+import { db } from '../db/init';
+import { processJob } from './job-processor';
 
-// 启动定时任务调度器
-export function startScheduler() {
-  // 每分钟检查一次是否有需要执行的任务
-  cron.schedule('* * * * *', async () => {
-    const now = new Date();
-    
-    // 获取所有激活的 KOL
-    const activeKols = await db.query(
-      'SELECT * FROM kols WHERE active = 1 AND fetch_policy IS NOT NULL'
-    );
-    
-    for (const kol of activeKols) {
-      const policy = JSON.parse(kol.fetch_policy);
-      
-      // 检查是否到了执行时间
-      if (shouldRunNow(policy.cron, kol.last_run)) {
-        console.log(`Triggering scheduled job for KOL: ${kol.name}`);
-        
-        // 直接触发任务
-        await processJob(kol.id);
-        
-        // 更新最后执行时间
-        await db.query(
-          'UPDATE kols SET last_run = ? WHERE id = ?',
-          [now.toISOString(), kol.id]
-        );
-      }
-    }
-  });
-  
-  console.log('Scheduler started');
+let schedulerTask: cron.ScheduledTask | null = null;
+
+function cronPrevMsBeforeNow(cronExpression: string, nowMs: number): number | null {
+  try {
+    const interval = cronParser.parseExpression(cronExpression, {
+      currentDate: new Date(nowMs),
+    });
+    return interval.prev().getTime();
+  } catch (error) {
+    console.error(`Invalid cron expression: ${cronExpression}`, error);
+    return null;
+  }
 }
 
-// 判断是否应该执行
-function shouldRunNow(cronExpression: string, lastRun: string | null): boolean {
-  if (!cronExpression) return false;
-  
-  // 使用 cron-parser 解析表达式
-  const parser = require('cron-parser');
-  const interval = parser.parseExpression(cronExpression);
-  const nextRun = interval.next().toDate();
-  
-  // 如果从未执行过，或者已经过了下次执行时间
-  if (!lastRun) return true;
-  
-  const lastRunDate = new Date(lastRun);
-  const now = new Date();
-  
-  return now >= nextRun && now.getTime() - lastRunDate.getTime() > 60000; // 至少间隔 1 分钟
+function kolEffectiveLastRunMs(kol: { last_run: string | null; created_at: string }): number {
+  if (kol.last_run) {
+    const t = Date.parse(kol.last_run);
+    if (!Number.isNaN(t)) return t;
+  }
+  const created = Date.parse(kol.created_at);
+  return Number.isNaN(created) ? 0 : created;
+}
+
+async function checkAndTriggerJobs(): Promise<void> {
+  const kols = db.prepare('SELECT * FROM kols WHERE active = 1').all() as any[];
+
+  for (const kol of kols) {
+    const fetchPolicy = kol.fetch_policy ? JSON.parse(kol.fetch_policy) : {};
+    const cronExpression = fetchPolicy.cron;
+    if (!cronExpression) continue;
+
+    const nowMs = Date.now();
+    const effectiveLastTs = kolEffectiveLastRunMs({
+      last_run: kol.last_run ?? null,
+      created_at: kol.created_at ?? '',
+    });
+
+    const slotTs = cronPrevMsBeforeNow(cronExpression, nowMs);
+    if (slotTs !== null && slotTs > effectiveLastTs && slotTs <= nowMs) {
+      // 检查是否已有活跃任务
+      const activeJob = db.prepare(`
+        SELECT id FROM jobs WHERE kol_id = ? AND status IN ('running', 'pending')
+        ORDER BY id DESC LIMIT 1
+      `).get(kol.id);
+      if (activeJob) continue;
+
+      // 创建任务并后台处理
+      const result = db.prepare(`
+        INSERT INTO jobs (kol_id, status, stage, progress, started_at)
+        VALUES (?, 'running', 'crawl', 0, ?)
+      `).run(kol.id, new Date().toISOString());
+
+      processJob(result.lastInsertRowid as number).catch(console.error);
+
+      // 标记该 cron slot 已执行（防止重复触发）
+      db.prepare('UPDATE kols SET last_run = ? WHERE id = ?')
+        .run(new Date(slotTs).toISOString(), kol.id);
+    }
+  }
+}
+
+export function startScheduler(): void {
+  schedulerTask = cron.schedule('* * * * *', async () => {
+    await checkAndTriggerJobs();
+    // 同时后台预渲染未处理的竖屏视频
+    preRenderVerticalVideos().catch(console.error);
+  });
 }
 ```
 
-### 数据库表更新
+**关键设计：**
+- 使用 `cron-parser` 的 `prev()` 获取上次应执行的时间点（slot）
+- 比较 slot 与 `last_run`：slot > last_run 表示该 slot 尚未执行
+- 更新 `last_run` 为 slot 时间戳（而非当前时间），确保同一 slot 不会重复触发
+- 同时后台预渲染缺失的竖屏视频
 
-需要在 `kols` 表中添加 `last_run` 字段：
+### 数据库表
+
+`kols` 表已包含 `last_run` 字段（见 schema.sql）：
 
 ```sql
-ALTER TABLE kols ADD COLUMN last_run DATETIME;
+CREATE TABLE IF NOT EXISTS kols (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  channel_url TEXT NOT NULL,
+  platform TEXT DEFAULT 'youtube',
+  fetch_policy TEXT,
+  active INTEGER DEFAULT 1,
+  last_run DATETIME,   -- 已存在
+  next_run TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ### 任务队列处理器
@@ -693,25 +729,20 @@ app.listen(3001, () => {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Cloud Run (Frontend)                    │
-│                    Vite Build + Static Files                 │
+│                    本地桌面应用 (Tauri)                      │
+│                  React Frontend + Express Backend            │
 └─────────────────────────────────────────────────────────────┘
                               │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Cloud Run (Backend API)                    │
-│                      Express.js Server                       │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-    ┌────────────┼────────────┐
-    ▼            ▼            ▼
-┌────────┐  ┌────────┐  ┌──────────┐
-│ Cloud  │  │ Redis  │  │  Cloud   │
-│ SQL    │  │ (Bull) │  │ Storage  │
-│ (PG)   │  │        │  │ (视频)    │
-└────────┘  └────────┘  └──────────┘
+    ┌─────────────────────────┼─────────────────────────┐
+    ▼                         ▼                         ▼
+┌────────┐              ┌──────────┐              ┌──────────┐
+│ SQLite │              │ 本地文件 │              │ 外部 API  │
+│ (数据库)│              │ (视频存储)│              │ (OpenAI)  │
+└────────┘              └──────────┘              └──────────┘
 ```
 
-**成本优化：**
-- 开发阶段：SQLite + 本地文件存储
-- 生产阶段：SQLite + Cloud Storage
+**本地部署特点：**
+- 数据存储：SQLite 数据库（本地文件）
+- 视频存储：本地文件系统（用户文档目录）
+- API 调用：直接调用 OpenAI API（用户配置密钥）
+- 无需云服务：完全本地运行，数据隐私保护

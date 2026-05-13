@@ -2,7 +2,9 @@
 
 ## 状态管理方案
 
-项目使用 **Zustand** 进行全局状态管理，所有数据定义在 `src/store.ts`。当前版本为纯前端 Mock 数据，无持久化后端。
+项目使用 **Zustand** 进行全局状态管理，所有数据定义在 `src/store.ts`。数据通过 REST API 与后端 SQLite 数据库持久化。
+
+> **项目类型：** 本地桌面应用（非 SaaS），数据存储在本地 SQLite 数据库
 
 ---
 
@@ -16,13 +18,14 @@ interface KOL {
   name: string;             // 显示名称（如"李自然"）
   channel_url: string;      // 频道 URL（如 youtube.com/@liziran）
   platform: string;         // 平台（当前仅 'youtube'）
-  tags: string[];           // 分类标签（如 ['AI', '科技', '评测']）
   fetch_policy: {
     cron?: string;          // Cron 表达式（如 '0 3 * * *'）
     max_videos?: number;    // 每次最多抓取视频数
   };
   active: number;           // 启用状态：1=激活，0=暂停
-  nextRun?: string;         // 下次执行时间（展示用字符串）
+  last_run?: string;        // 最后一次执行时间（ISO 8601）
+  next_run?: string;        // 下次执行时间（展示用字符串）
+  created_at: string;       // 创建时间（ISO 8601）
 }
 ```
 
@@ -46,18 +49,22 @@ interface Job {
 ```ts
 interface Clip {
   id: number;
+  video_id: string;         // 来源视频 ID（YouTube videoId）
   videoTitle: string;       // 来源视频标题
   kolName: string;          // 来源 KOL 名称
-  kolAvatar?: string;       // KOL 头像 URL（可选）
   thumbnail: string;        // 片段封面图 URL
+  verticalCover?: string;   // 竖屏渲染视频 URL（可选）
   title: string;            // AI 生成的片段标题
-  summary: string;          // AI 生成的内容摘要
-  keywords: string[];       // AI 提取的语义关键词
   startSec: number;         // 片段起始时间（秒）
   endSec: number;           // 片段结束时间（秒）
-  topicCategory: string;    // 话题分类（观点/分析/教程）
-  createdAt: string;        // 创建日期（YYYY-MM-DD）
+  createdAt: string;        // 创建日期（ISO 8601）
   relevance?: number;       // 搜索相关度评分（0-100），搜索结果时有效
+}
+
+interface SubtitleSegment {
+  start: number;            // 字幕开始时间（秒）
+  end: number;              // 字幕结束时间（秒）
+  text: string;             // 字幕文本
 }
 ```
 
@@ -73,7 +80,6 @@ interface Clip {
 │ name            │         │ kolName (FK→KOL.name)│
 │ channel_url     │         │ videoTitle           │
 │ platform        │         │ stage                │
-│ tags[]          │         │ status               │
 │ fetch_policy    │         │ progress             │
 │ active          │         │ duration             │
 │ nextRun         │         │ time                 │
@@ -89,10 +95,8 @@ interface Clip {
 │ kolName (FK→KOL.name)│
 │ thumbnail            │
 │ title                │
-│ summary              │
-│ keywords[]           │
 │ startSec / endSec    │
-│ topicCategory        │
+│ subtitles[]          │
 │ createdAt            │
 │ relevance            │
 └─────────────────────┘
@@ -116,7 +120,7 @@ interface AppState {
 
   // UI 状态
   theme: 'dark' | 'light';
-  activePage: PageType;     // 'kol' | 'task' | 'clip' | 'search' | 'combine'
+  activePage: PageType;     // 'kol' | 'task' | 'clip' | 'search'
 
   // Actions
   setTheme: (theme) => void;
@@ -129,15 +133,17 @@ interface AppState {
 
 ---
 
-## Mock 数据说明
+## 数据来源
 
-当前所有数据为硬编码 Mock，定义在 `store.ts` 顶部：
+所有数据通过 REST API 从后端 SQLite 数据库获取：
 
-| 常量 | 内容 |
-|------|------|
-| `DUMMY_KOLS` | 3 个 KOL：李自然（激活）、硅谷徐（激活）、TESTV（暂停） |
-| `DUMMY_JOBS` | 5 条任务记录：1 条 running（进度 62%）、3 条 success、1 条 failed |
-| `DUMMY_CLIPS` | 3 个片段：来自李自然和硅谷徐，含封面图（Unsplash）、摘要、关键词 |
+| 数据 | API 端点 | 说明 |
+|------|----------|------|
+| KOLs | `GET /api/kols` | 从 `kols` 表读取 |
+| Jobs | `GET /api/jobs` | 从 `jobs` 表读取 |
+| Clips | `GET /api/clips` | 从 `clips` 表读取 |
+
+前端 `store.ts` 在初始化时自动调用 `fetchKOLs()`、`fetchJobs()`、`fetchClips()` 加载数据。
 
 ---
 
@@ -146,8 +152,8 @@ interface AppState {
 | stage 值 | 展示标签 | 含义 |
 |----------|----------|------|
 | `crawl` | AWAITING_METADATA | 抓取视频元数据 |
-| `process` | SEGMENT_STREAM | 视频分段处理 |
-| `clip` | EXTRACT_HIGHLIGHTS | AI 提取高亮片段 |
+| `process` | SEGMENT_STREAM | 验证字幕可解析 |
+| `clip` | EXTRACT_HIGHLIGHTS | LLM 切分片段（title + 时间段）|
 | `index` | VECTOR_INDEXING | 向量化索引入库 |
 
 ---
@@ -155,7 +161,7 @@ interface AppState {
 ## 页面路由类型
 
 ```ts
-type PageType = 'kol' | 'task' | 'clip' | 'search' | 'combine';
+type PageType = 'kol' | 'task' | 'clip' | 'search';
 ```
 
-`activePage` 存储在 Zustand store 中，由 `Layout.tsx` 读取并渲染对应页面组件。`Search` 页面可通过 `setActivePage('combine')` 直接跳转到合成页（Lucky Combo 功能触发）。
+`activePage` 存储在 Zustand store 中，由 `Layout.tsx` 读取并渲染对应页面组件。

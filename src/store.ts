@@ -23,7 +23,6 @@ export interface KOL {
   name: string;
   channel_url: string;
   platform: string;
-  tags: string[];
   fetch_policy: {
     cron?: string;
     max_videos?: number;
@@ -38,7 +37,6 @@ export interface CreateKOLPayload {
   name?: string;
   channel_url: string;
   platform?: string;
-  tags?: string[];
   fetch_policy?: {
     cron?: string;
     max_videos?: number;
@@ -68,17 +66,15 @@ export interface Clip {
   kolName: string;
   kolAvatar?: string;
   thumbnail: string;
+  verticalCover?: string;
   title: string;
-  summary: string;
-  keywords: string[];
   startSec: number;
   endSec: number;
-  topicCategory: string;
   createdAt: string;
   relevance?: number;
 }
 
-export type PageType = 'kol' | 'task' | 'clip' | 'search' | 'combine';
+export type PageType = 'kol' | 'task' | 'clip' | 'search';
 
 interface AppState {
   kols: KOL[];
@@ -95,9 +91,9 @@ interface AppState {
   fetchClips: () => Promise<void>;
   addKOL: (kol: CreateKOLPayload) => Promise<void>;
   updateKOL: (id: number, kol: Partial<KOL>) => Promise<void>;
+  deleteKOL: (id: number) => Promise<void>;
   triggerJob: (kolId: number) => Promise<void>;
   searchClips: (query: string) => Promise<Clip[]>;
-  luckyCombo: (prompt: string) => Promise<Clip[]>;
 }
 
 // Helper function to fetch with error handling
@@ -122,41 +118,22 @@ async function fetchAPI<T>(endpoint: string, options?: RequestInit): Promise<T> 
   }
 }
 
-function parseKeywords(raw: unknown): string[] {
-  if (Array.isArray(raw)) {
-    return raw.filter((k): k is string => typeof k === 'string').map((k) => k.trim()).filter(Boolean);
-  }
-  if (typeof raw === 'string') {
-    try {
-      const p = JSON.parse(raw);
-      return Array.isArray(p) ? p.filter((k): k is string => typeof k === 'string') : [];
-    } catch {
-      return [];
-    }
-  }
-  return [];
+function normalizePath(p: unknown): string {
+  if (typeof p !== 'string' || p.length === 0) return '';
+  return p.startsWith('http') || p.startsWith('/') ? p : `/${p}`;
 }
 
 function mapApiClip(clip: Record<string, unknown>): Clip {
-  const th = clip.thumbnail;
-  const thumbnail =
-    typeof th === 'string' && th.length > 0
-      ? th.startsWith('http') || th.startsWith('/')
-        ? th
-        : `/${th}`
-      : '';
   return {
     id: clip.id as number,
     video_id: clip.video_id as string,
     videoTitle: (clip.video_title as string) || (clip.videoTitle as string) || '未知视频',
     kolName: (clip.kol_name as string) || (clip.kolName as string) || '',
-    thumbnail,
+    thumbnail: normalizePath(clip.thumbnail),
+    verticalCover: normalizePath(clip.vertical_cover) || undefined,
     title: (clip.title as string) || '',
-    summary: (clip.summary as string) || '',
-    keywords: parseKeywords(clip.keywords),
     startSec: Number(clip.start_sec ?? clip.startSec ?? 0),
     endSec: Number(clip.end_sec ?? clip.endSec ?? 0),
-    topicCategory: (clip.topic_category as string) || (clip.topicCategory as string) || 'other',
     createdAt: (clip.created_at as string) || (clip.createdAt as string) || '',
     relevance: clip.relevance as number | undefined,
   };
@@ -237,6 +214,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  deleteKOL: async (id) => {
+    set({ isLoading: true, error: null });
+    try {
+      await fetchAPI(`/kols/${id}`, {
+        method: 'DELETE',
+      });
+      await get().fetchKOLs();
+    } catch (error) {
+      set({ error: 'Failed to delete KOL', isLoading: false });
+      throw error;
+    }
+  },
+
   triggerJob: async (kolId) => {
     set({ isLoading: true, error: null });
     try {
@@ -269,21 +259,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  luckyCombo: async (prompt) => {
-    set({ isLoading: true, error: null });
-    try {
-      const data = await fetchAPI<{ selectedClips: any[]; reasoning: string }>('/lucky-combo', {
-        method: 'POST',
-        body: JSON.stringify({ prompt }),
-      });
-      const clips: Clip[] = data.selectedClips.map((c) => mapApiClip(c));
-      set({ isLoading: false });
-      return clips;
-    } catch (error) {
-      set({ error: 'Failed to select clips', isLoading: false });
-      throw error;
-    }
-  },
 }));
 
 // Initialize data on mount

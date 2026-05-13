@@ -27,7 +27,6 @@ router.get('/', asyncHandler(async (req: Request, res: Response) => {
     name: row.name,
     channel_url: row.channel_url,
     platform: row.platform,
-    tags: row.tags ? JSON.parse(row.tags) : [],
     fetch_policy: row.fetch_policy ? JSON.parse(row.fetch_policy) : {},
     active: row.active,
     last_run: row.last_run,
@@ -40,7 +39,7 @@ router.get('/', asyncHandler(async (req: Request, res: Response) => {
 
 // POST /api/kols - Create new KOL
 router.post('/', asyncHandler(async (req: Request, res: Response) => {
-  const { name, channel_url, tags = [], fetch_policy = {}, active = 1 } = req.body as CreateKOLRequest;
+  const { name, channel_url, fetch_policy = {}, active = 1 } = req.body as CreateKOLRequest;
 
   if (!channel_url) {
     throw new AppError(400, 'channel_url is required');
@@ -52,7 +51,6 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     channel_url: normalizedUrl,
     hasName: Boolean(name),
     resolvedName,
-    tagsCount: Array.isArray(tags) ? tags.length : 0,
   });
 
   // Idempotent create: if the channel already exists, update fields and return it.
@@ -61,11 +59,10 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
   if (existing) {
     db.prepare(`
       UPDATE kols
-      SET name = ?, tags = ?, fetch_policy = ?, active = ?
+      SET name = ?, fetch_policy = ?, active = ?
       WHERE id = ?
     `).run(
       resolvedName,
-      JSON.stringify(tags),
       JSON.stringify(fetch_policy),
       active,
       existing.id
@@ -77,7 +74,6 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
       name: updated.name,
       channel_url: updated.channel_url,
       platform: updated.platform,
-      tags: updated.tags ? JSON.parse(updated.tags) : [],
       fetch_policy: updated.fetch_policy ? JSON.parse(updated.fetch_policy) : {},
       active: updated.active,
       next_run: updated.next_run,
@@ -86,12 +82,11 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
   }
 
   const result = db.prepare(`
-      INSERT INTO kols (name, channel_url, platform, tags, fetch_policy, active)
-      VALUES (?, ?, 'youtube', ?, ?, ?)
+      INSERT INTO kols (name, channel_url, platform, fetch_policy, active)
+      VALUES (?, ?, 'youtube', ?, ?)
     `).run(
     resolvedName,
     normalizedUrl,
-    JSON.stringify(tags),
     JSON.stringify(fetch_policy),
     active
   );
@@ -103,7 +98,6 @@ router.post('/', asyncHandler(async (req: Request, res: Response) => {
     name: kol.name,
     channel_url: kol.channel_url,
     platform: kol.platform,
-    tags: kol.tags ? JSON.parse(kol.tags) : [],
     fetch_policy: kol.fetch_policy ? JSON.parse(kol.fetch_policy) : {},
     active: kol.active,
     next_run: kol.next_run,
@@ -131,10 +125,6 @@ router.patch('/:id', asyncHandler(async (req: Request, res: Response) => {
   if (updates.channel_url !== undefined) {
     updatesArray.push('channel_url = ?');
     values.push(updates.channel_url);
-  }
-  if (updates.tags !== undefined) {
-    updatesArray.push('tags = ?');
-    values.push(JSON.stringify(updates.tags));
   }
   if (updates.fetch_policy !== undefined) {
     updatesArray.push('fetch_policy = ?');
@@ -168,7 +158,6 @@ router.patch('/:id', asyncHandler(async (req: Request, res: Response) => {
     name: updated.name,
     channel_url: updated.channel_url,
     platform: updated.platform,
-    tags: updated.tags ? JSON.parse(updated.tags) : [],
     fetch_policy: updated.fetch_policy ? JSON.parse(updated.fetch_policy) : {},
     active: updated.active,
     last_run: updated.last_run,

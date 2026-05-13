@@ -2,6 +2,9 @@ import express, { Request, Response } from 'express';
 import { db } from '../db/init';
 import type { Clip, SearchRequest, SearchResponse } from '../types';
 import { AppError, asyncHandler } from '../middleware/error-handler';
+import { renderVerticalVideo, getVerticalVideoPath } from '../services/vertical-renderer';
+import * as path from 'path';
+import * as fs from 'fs';
 
 const router = express.Router();
 
@@ -16,17 +19,27 @@ function mapClipRow(row: any): Clip {
     start_sec: row.start_sec,
     end_sec: row.end_sec,
     title: row.title,
-    summary: row.summary,
-    keywords: row.keywords ? JSON.parse(row.keywords) : [],
-    topic_category: row.topic_category,
     thumbnail: row.thumbnail,
+    vertical_cover: row.vertical_cover ?? undefined,
+    subtitles: row.subtitles ? JSON.parse(row.subtitles) : undefined,
     created_at: row.created_at,
   };
 }
 
+// In-memory store for render jobs
+const renderJobs = new Map<number, {
+  clipId: number;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: number;
+  outputPath?: string;
+  error?: string;
+}>();
+
+let nextJobId = 1;
+
 // GET /api/clips - Get all clips (with optional filters)
 router.get('/', asyncHandler(async (req: Request, res: Response) => {
-  const { kolName, category, sort = 'newest', limit = 50, offset = 0 } = req.query;
+  const { kolName, sort = 'newest', limit = 50, offset = 0 } = req.query;
 
   const filterParams: any[] = [];
   let where = CLIP_BASE;
@@ -34,11 +47,6 @@ router.get('/', asyncHandler(async (req: Request, res: Response) => {
   if (kolName) {
     where += ' AND clips.kol_name = ?';
     filterParams.push(kolName);
-  }
-
-  if (category) {
-    where += ' AND clips.topic_category = ?';
-    filterParams.push(category);
   }
 
   let orderBy = ' ORDER BY clips.created_at DESC';
@@ -73,7 +81,6 @@ router.get('/:id', asyncHandler(async (req: Request, res: Response) => {
   }
 
   const clip: Clip = mapClipRow(row);
-
   res.json({ clip });
 }));
 
@@ -92,15 +99,16 @@ router.post('/search', asyncHandler(async (req: Request, res: Response) => {
   const results = rows
     .map((row) => {
       const title = row.title.toLowerCase();
-      const summary = row.summary?.toLowerCase() || '';
-      const keywords = row.keywords ? JSON.parse(row.keywords).map((k: string) => k.toLowerCase()) : [];
+      // 搜索也匹配字幕内容
+      const subtitleText = row.subtitles
+        ? JSON.parse(row.subtitles).map((s: any) => s.text?.toLowerCase() || '').join(' ')
+        : '';
 
       let relevance = 0;
 
       searchTerms.forEach((term) => {
         if (title.includes(term)) relevance += 30;
-        if (summary.includes(term)) relevance += 20;
-        if (keywords.some((k: string) => k.includes(term))) relevance += 10;
+        if (subtitleText.includes(term)) relevance += 15;
       });
 
       return {
@@ -113,8 +121,137 @@ router.post('/search', asyncHandler(async (req: Request, res: Response) => {
     .slice(0, limit as number);
 
   const response: SearchResponse = { results };
-
   res.json(response);
 }));
+
+// POST /api/clips/vertical-render - Start vertical video render for a clip
+router.post('/vertical-render', asyncHandler(async (req: Request, res: Response) => {
+  const { clipId } = req.body as { clipId: number };
+
+  if (!clipId || !Number.isFinite(clipId)) {
+    throw new AppError(400, 'clipId is required');
+  }
+
+  // Check clip exists
+  const row = db.prepare('SELECT * FROM clips WHERE id = ?').get(clipId) as any;
+  if (!row) {
+    throw new AppError(404, 'Clip not found');
+  }
+
+  // Check if already rendered
+  const existingPath = getVerticalVideoPath(clipId);
+  if (existingPath) {
+    res.json({
+      jobId: 0,
+      status: 'completed',
+      outputPath: existingPath,
+    });
+    return;
+  }
+
+  // Create render job
+  const jobId = nextJobId++;
+  renderJobs.set(jobId, {
+    clipId,
+    status: 'pending',
+    progress: 0,
+  });
+
+  // Start render in background
+  const clipData = {
+    id: row.id,
+    video_id: row.video_id,
+    kol_name: row.kol_name,
+    start_sec: row.start_sec,
+    end_sec: row.end_sec,
+    title: row.title,
+    thumbnail: row.thumbnail,
+    subtitles: row.subtitles ? JSON.parse(row.subtitles) : undefined,
+  };
+
+  processVerticalRender(jobId, clipData).catch((error) => {
+    console.error(`[vertical-render] Job ${jobId} failed:`, error);
+    const job = renderJobs.get(jobId);
+    if (job) {
+      job.status = 'failed';
+      job.error = error instanceof Error ? error.message : 'Unknown error';
+    }
+  });
+
+  res.json({
+    jobId,
+    status: 'pending',
+  });
+}));
+
+// GET /api/clips/vertical-render/:jobId - Check render job status
+router.get('/vertical-render/:jobId', asyncHandler(async (req: Request, res: Response) => {
+  const jobId = parseInt(req.params.jobId as string, 10);
+  if (!Number.isFinite(jobId)) {
+    throw new AppError(400, 'Invalid jobId');
+  }
+
+  const job = renderJobs.get(jobId);
+  if (!job) {
+    throw new AppError(404, 'Render job not found');
+  }
+
+  res.json({
+    jobId,
+    clipId: job.clipId,
+    status: job.status,
+    progress: job.progress,
+    outputPath: job.outputPath,
+    error: job.error,
+  });
+}));
+
+// GET /api/clips/vertical-download/:filename - Download rendered vertical video
+router.get('/vertical-download/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const filePath = path.resolve(process.cwd(), 'storage', 'vertical-videos', filename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+
+    res.download(filePath);
+  } catch (error) {
+    console.error('Error downloading vertical video:', error);
+    res.status(500).json({ error: 'Failed to download file' });
+  }
+});
+
+/**
+ * Process vertical render job in background
+ */
+async function processVerticalRender(jobId: number, clipData: any): Promise<void> {
+  const job = renderJobs.get(jobId);
+  if (!job) return;
+
+  try {
+    job.status = 'running';
+    job.progress = 10;
+
+    const outputPath = await renderVerticalVideo(clipData);
+
+    job.status = 'completed';
+    job.progress = 100;
+    job.outputPath = outputPath;
+
+    const outputFileName = path.basename(outputPath);
+    db.prepare('UPDATE clips SET vertical_cover = ? WHERE id = ?').run(
+      `/api/vertical-covers/${outputFileName}`,
+      clipData.id
+    );
+
+    console.log(`[vertical-render] Job ${jobId} completed: ${outputPath}`);
+  } catch (error: any) {
+    job.status = 'failed';
+    job.error = error?.message || 'Render failed';
+    console.error(`[vertical-render] Job ${jobId} failed:`, error);
+  }
+}
 
 export default router;

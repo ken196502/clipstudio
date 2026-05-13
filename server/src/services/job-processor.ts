@@ -1,9 +1,10 @@
 import { db } from '../db/init';
 import { fetchChannelVideos, videoExists, saveVideo, getKOL } from './youtube';
-import { segmentSubtitles } from './segmenter';
-import { analyzeClip } from './llm';
+import { sliceVideoByLLM } from './llm';
 import { generateClipThumbnailAtTimestamp } from './clip-thumbnail';
 import { notifyJobsChanged } from './job-broadcast';
+import { renderVerticalVideo } from './vertical-renderer';
+import type { SubtitleSegment } from '../types';
 
 export type JobStage = 'crawl' | 'process' | 'clip' | 'index';
 export type JobStatus = 'pending' | 'running' | 'success' | 'failed';
@@ -57,7 +58,6 @@ function completeJob(jobId: number, status: 'success' | 'failed', error?: string
  */
 export async function processJob(jobId: number): Promise<void> {
   try {
-    // Get job details
     const job = db.prepare('SELECT * FROM jobs WHERE id = ?').get(jobId) as any;
     if (!job) {
       throw new Error(`Job ${jobId} not found`);
@@ -73,16 +73,15 @@ export async function processJob(jobId: number): Promise<void> {
     // Stage 1: Crawl - Fetch channel videos
     await processCrawlStage(jobId, kol);
 
-    // Stage 2: Process - Segment subtitles
+    // Stage 2: Process - (保留阶段用于兼容性，实际切片在clip阶段由LLM完成)
     await processProcessStage(jobId, kol);
 
-    // Stage 3: Clip - Analyze with LLM
+    // Stage 3: Clip - 让LLM切分视频，按时间段提取字幕保存
     await processClipStage(jobId, kol);
 
-    // Stage 4: Index - Save to database
+    // Stage 4: Index
     await processIndexStage(jobId, kol);
 
-    // Mark job as complete
     completeJob(jobId, 'success');
     console.log(`[Job ${jobId}] Job completed successfully`);
   } catch (error) {
@@ -105,17 +104,14 @@ async function processCrawlStage(jobId: number, kol: any): Promise<void> {
 
     updateJobProgress(jobId, 'crawl', 'running', 50, undefined, undefined);
 
-    // Save videos to database
     let savedCount = 0;
     for (const video of result.videos) {
       if (!videoExists(video.videoId)) {
         saveVideo(video, kol.id);
         savedCount++;
       } else {
-        // If video exists but maybe belongs to another "KOL" entry of the same channel
-        // update the kol_id to the current one so it gets processed
         db.prepare('UPDATE videos SET kol_id = ? WHERE id = ?').run(kol.id, video.videoId);
-        savedCount++; // Count it as "new" for this job's processing purposes
+        savedCount++;
       }
     }
 
@@ -128,60 +124,53 @@ async function processCrawlStage(jobId: number, kol: any): Promise<void> {
 }
 
 /**
- * Stage 2: Process - Segment subtitles
+ * Stage 2: Process - 标记已处理（实际切片逻辑移到clip阶段）
  */
 async function processProcessStage(jobId: number, kol: any): Promise<void> {
   updateJobProgress(jobId, 'process', 'running', 0);
 
-  try {
-    // Get videos for this KOL that haven't been processed yet
-    const videos = db.prepare(`
-      SELECT * FROM videos
-      WHERE kol_id = ?
-      AND id NOT IN (SELECT DISTINCT video_id FROM clips)
-      ORDER BY published_at DESC
-    `).all(kol.id) as any[];
+  const videos = db.prepare(`
+    SELECT * FROM videos
+    WHERE kol_id = ?
+    AND id NOT IN (SELECT DISTINCT video_id FROM clips)
+    ORDER BY published_at DESC
+  `).all(kol.id) as any[];
 
-    if (videos.length === 0) {
-      updateJobProgress(jobId, 'process', 'success', 100);
-      console.log(`[Job ${jobId}] Process stage completed: No new videos to process`);
-      return;
-    }
-
-    // Process each video
-    for (let i = 0; i < videos.length; i++) {
-      const video = videos[i];
-      const progress = Math.round(((i + 1) / videos.length) * 100);
-
-      try {
-        const subtitles = JSON.parse(video.subtitles);
-        const segments = segmentSubtitles(subtitles);
-
-        // Store segments temporarily for the next stage
-        // We'll use a temporary table or in-memory storage
-        // For now, we'll just update the job progress
-        updateJobProgress(jobId, 'process', 'running', progress, video.title);
-      } catch (error) {
-        console.error(`[Job ${jobId}] Failed to process video ${video.id}:`, error);
-      }
-    }
-
+  if (videos.length === 0) {
     updateJobProgress(jobId, 'process', 'success', 100);
-    console.log(`[Job ${jobId}] Process stage completed: ${videos.length} videos processed`);
-  } catch (error) {
-    updateJobProgress(jobId, 'process', 'failed', 0, undefined, error instanceof Error ? error.message : 'Unknown error');
-    throw error;
+    return;
   }
+
+  // 验证字幕可解析
+  for (let i = 0; i < videos.length; i++) {
+    const video = videos[i];
+    if (!video.subtitles) {
+      throw new Error(`Video ${video.id} has no subtitles`);
+    }
+    JSON.parse(video.subtitles);
+    updateJobProgress(jobId, 'process', 'running', Math.round(((i + 1) / videos.length) * 100), video.title);
+  }
+
+  updateJobProgress(jobId, 'process', 'success', 100);
+  console.log(`[Job ${jobId}] Process stage completed: ${videos.length} videos ready`);
 }
 
 /**
- * Stage 3: Clip - Analyze with LLM
+ * Stage 3: Clip - 【核心】让LLM切分视频，按时间段保存clip
+ *
+ * 流程：
+ * 1. 取完整字幕给LLM
+ * 2. LLM返回 [{title, start_sec, end_sec}, ...]
+ * 3. 对每个返回的片段：
+ *    - 按时间段从原始字幕中过滤出该片段的字幕
+ *    - 生成缩略图
+ *    - 保存到clips表（只存 title, start_sec, end_sec, subtitles）
+ *    - 异步渲染竖屏视频
  */
 async function processClipStage(jobId: number, kol: any): Promise<void> {
   updateJobProgress(jobId, 'clip', 'running', 0);
 
   try {
-    // Get videos for this KOL that haven't been processed yet
     const videos = db.prepare(`
       SELECT * FROM videos
       WHERE kol_id = ?
@@ -191,80 +180,90 @@ async function processClipStage(jobId: number, kol: any): Promise<void> {
 
     if (videos.length === 0) {
       updateJobProgress(jobId, 'clip', 'success', 100);
-      console.log(`[Job ${jobId}] Clip stage completed: No new videos to analyze`);
       return;
     }
 
-    let totalSegments = 0;
-    let processedSegments = 0;
+    let totalClips = 0;
+    let processedClips = 0;
 
-    // First, count total segments
+    // 先估算总片段数（用于进度条）
     for (const video of videos) {
-      try {
-        const subtitles = JSON.parse(video.subtitles);
-        const segments = segmentSubtitles(subtitles);
-        totalSegments += segments.length;
-      } catch (error) {
-        console.error(`[Job ${jobId}] Failed to segment video ${video.id}:`, error);
-      }
+      const subtitles = JSON.parse(video.subtitles) as SubtitleSegment[];
+      // 预估：每60秒一个片段
+      const duration = subtitles.length > 0
+        ? subtitles[subtitles.length - 1].end - subtitles[0].start
+        : 0;
+      totalClips += Math.max(1, Math.floor(duration / 60));
     }
 
-    // Process each video
     for (const video of videos) {
-      try {
-        const subtitles = JSON.parse(video.subtitles);
-        const segments = segmentSubtitles(subtitles);
-
-        // Analyze each segment
-        for (const segment of segments) {
-          try {
-            const analysis = await analyzeClip(
-              segment.text,
-              video.title,
-              kol.name,
-              segment.startSec,
-              segment.endSec
-            );
-
-            const frameThumb = await generateClipThumbnailAtTimestamp(
-              video.id,
-              segment.startSec,
-              segment.endSec
-            );
-            const thumbnailUrl = frameThumb || video.thumbnail || null;
-
-            // Save clip to database
-            db.prepare(`
-              INSERT INTO clips (video_id, kol_name, start_sec, end_sec, title, summary, keywords, topic_category, thumbnail)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(
-              video.id,
-              kol.name,
-              segment.startSec,
-              segment.endSec,
-              analysis.title,
-              analysis.summary,
-              JSON.stringify(analysis.keywords),
-              analysis.topic_category,
-              thumbnailUrl
-            );
-
-            processedSegments++;
-            const progress = Math.round((processedSegments / totalSegments) * 100);
-            updateJobProgress(jobId, 'clip', 'running', progress, video.title);
-          } catch (error) {
-            console.error(`[Job ${jobId}] Failed to analyze segment:`, error);
-          }
-        }
-      } catch (error) {
-        console.error(`[Job ${jobId}] Failed to process video ${video.id}:`, error);
+      const subtitles = JSON.parse(video.subtitles) as SubtitleSegment[];
+      if (!subtitles || subtitles.length === 0) {
+        throw new Error(`Video ${video.id} has no subtitles`);
       }
+
+        console.log(`[Job ${jobId}] Slicing video: ${video.title} (${subtitles.length} subtitle segments)`);
+
+        // 【核心】让LLM切分视频
+        const slices = await sliceVideoByLLM(subtitles, video.title, kol.name);
+        console.log(`[Job ${jobId}] LLM returned ${slices.length} slices for ${video.title}`);
+
+        for (const slice of slices) {
+          // 按时间段提取该片段的字幕
+          const clipSubtitles = subtitles.filter(
+            s => s.start >= slice.start_sec && s.end <= slice.end_sec
+          );
+
+          // 生成缩略图（失败不影响主流程，使用视频缩略图兜底）
+          const frameThumb = await generateClipThumbnailAtTimestamp(
+            video.id,
+            slice.start_sec,
+            slice.end_sec
+          );
+          const thumbnailUrl = frameThumb || video.thumbnail || null;
+
+          // 保存clip到数据库
+          const result = db.prepare(`
+            INSERT INTO clips (video_id, kol_name, start_sec, end_sec, title, thumbnail, subtitles)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            video.id,
+            kol.name,
+            slice.start_sec,
+            slice.end_sec,
+            slice.title,
+            thumbnailUrl,
+            JSON.stringify(clipSubtitles)
+          );
+
+          const clipId = result.lastInsertRowid as number;
+
+          // 异步渲染竖屏视频
+          renderVerticalVideo({
+            id: clipId,
+            video_id: video.id,
+            kol_name: kol.name,
+            start_sec: slice.start_sec,
+            end_sec: slice.end_sec,
+            title: slice.title,
+            thumbnail: thumbnailUrl,
+            subtitles: clipSubtitles,
+          }).then((outputPath) => {
+            console.log(`[Job ${jobId}] Vertical video pre-rendered for clip ${clipId}: ${outputPath}`);
+          }).catch(err => {
+            console.error(`[Job ${jobId}] Failed to render vertical video for clip ${clipId}:`, err.message);
+          });
+
+          processedClips++;
+          const progress = Math.min(100, Math.round((processedClips / totalClips) * 100));
+          updateJobProgress(jobId, 'clip', 'running', progress, video.title);
+        }
     }
 
     updateJobProgress(jobId, 'clip', 'success', 100);
-    console.log(`[Job ${jobId}] Clip stage completed: ${processedSegments} clips created`);
+    console.log(`[Job ${jobId}] Clip stage completed: ${processedClips} clips created`);
 
-    if (processedSegments === 0 && totalSegments > 0) {
+    if (processedClips === 0 && videos.length > 0) {
       throw new Error('Failed to generate any clips. Check LLM API configuration.');
     }
   } catch (error) {
@@ -274,27 +273,12 @@ async function processClipStage(jobId: number, kol: any): Promise<void> {
 }
 
 /**
- * Stage 4: Index - Save to database (already done in clip stage)
+ * Stage 4: Index
  */
 async function processIndexStage(jobId: number, kol: any): Promise<void> {
   updateJobProgress(jobId, 'index', 'running', 0);
-
-  try {
-    // In this implementation, indexing is done during the clip stage
-    // This stage is mainly for generating embeddings or other indexing tasks
-
-    // For now, just mark as complete
-    updateJobProgress(jobId, 'index', 'running', 50);
-
-    // TODO: Generate embeddings for semantic search
-    // This would involve calling OpenAI's embeddings API
-
-    updateJobProgress(jobId, 'index', 'success', 100);
-    console.log(`[Job ${jobId}] Index stage completed`);
-  } catch (error) {
-    updateJobProgress(jobId, 'index', 'failed', 0, undefined, error instanceof Error ? error.message : 'Unknown error');
-    throw error;
-  }
+  updateJobProgress(jobId, 'index', 'success', 100);
+  console.log(`[Job ${jobId}] Index stage completed`);
 }
 
 /**

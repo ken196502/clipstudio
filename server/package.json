@@ -11,8 +11,7 @@
     "yt-dlp:install": "uv venv && uv pip install yt-dlp",
     "test": "NODE_ENV=test vitest run",
     "db:init": "tsx src/db/init.ts",
-    "db:reset": "tsx src/db/reset.ts",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:reset": "tsx src/db/reset.ts"
   },
   "keywords": [
     "video",
@@ -34,6 +33,7 @@
     "node-fetch": "2.7.0",
     "openai": "^4.80.1",
     "proxy-agent": "^8.0.1",
+    "puppeteer-core": "^24.43.0",
     "undici": "^8.2.0",
     "uuid": "^11.0.3",
     "ws": "^8.20.0",

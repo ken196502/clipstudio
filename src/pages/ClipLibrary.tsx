@@ -1,9 +1,10 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
+import React from 'react';
 import { useAppStore, Clip } from '../store';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Play, Download, Copy, Film, Shapes } from 'lucide-react';
+import { Play, Download, Smartphone, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 function youtubeEmbedSrc(clip: Clip): string {
@@ -12,10 +13,18 @@ function youtubeEmbedSrc(clip: Clip): string {
   return `https://www.youtube.com/embed/${clip.video_id}?start=${start}&end=${end}&autoplay=1&rel=0`;
 }
 
+interface DownloadState {
+  status: 'idle' | 'rendering' | 'ready' | 'downloading' | 'error';
+  progress?: number;
+  error?: string;
+  outputPath?: string;
+}
+
 export default function ClipLibrary() {
   const { clips, fetchClips } = useAppStore();
   const [selectedClip, setSelectedClip] = useState<Clip | null>(null);
   const [previewClip, setPreviewClip] = useState<Clip | null>(null);
+  const [downloadStates, setDownloadStates] = useState<Record<number, DownloadState>>({});
 
   useEffect(() => {
     fetchClips().catch((error) => {
@@ -27,9 +36,10 @@ export default function ClipLibrary() {
     setSelectedClip(null);
     setPreviewClip(clip);
   }, []);
+
   const [selectedKol, setSelectedKol] = useState('all');
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [sortBy, setSortBy] = useState('newest');
+
   const kolOptions = useMemo(() => {
     const values = Array.from(
       new Set(
@@ -41,26 +51,12 @@ export default function ClipLibrary() {
     return values;
   }, [clips]);
 
-  const categoryOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(
-        clips
-          .map((clip) => clip.topicCategory)
-          .filter((category) => typeof category === 'string' && category.trim().length > 0)
-      )
-    ).sort((a, b) => a.localeCompare(b, 'zh-CN'));
-    return values;
-  }, [clips]);
 
   const filteredClips = useMemo(() => {
     let result = clips;
 
     if (selectedKol !== 'all') {
       result = result.filter(c => c.kolName === selectedKol);
-    }
-
-    if (selectedCategory !== 'all') {
-      result = result.filter(c => c.topicCategory === selectedCategory);
     }
 
     if (sortBy === 'newest') {
@@ -70,7 +66,7 @@ export default function ClipLibrary() {
     }
 
     return result;
-  }, [clips, selectedKol, selectedCategory, sortBy]);
+  }, [clips, selectedKol, sortBy]);
 
   const formatDuration = (start: number, end: number) => {
     const s = Math.floor(start / 60);
@@ -80,15 +76,118 @@ export default function ClipLibrary() {
     return `${s}m${sRem}s - ${e}m${eRem}s`;
   };
 
+  const handleDownloadVertical = useCallback(async (clip: Clip, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    const clipId = clip.id;
+
+    setDownloadStates(prev => ({
+      ...prev,
+      [clipId]: { status: 'rendering', progress: 0 }
+    }));
+
+    try {
+      // Start vertical render job
+      const renderRes = await fetch('/api/clips/vertical-render', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clipId }),
+      });
+
+      if (!renderRes.ok) {
+        const errData = await renderRes.json();
+        throw new Error(errData.error || 'Failed to start render');
+      }
+
+      const renderData = await renderRes.json();
+
+      // If already completed (cached), go straight to ready
+      if (renderData.status === 'completed') {
+        setDownloadStates(prev => ({
+          ...prev,
+          [clipId]: { status: 'ready', outputPath: renderData.outputPath }
+        }));
+        return;
+      }
+
+      const jobId = renderData.jobId;
+      if (!jobId || jobId === 0) {
+        setDownloadStates(prev => ({
+          ...prev,
+          [clipId]: { status: 'error', error: 'Invalid job ID returned' }
+        }));
+        return;
+      }
+
+      // Poll for completion
+      let pollAttempts = 0;
+      const maxPollAttempts = 150; // 5 minutes max (150 * 2s)
+      const pollInterval = setInterval(async () => {
+        try {
+          pollAttempts++;
+          if (pollAttempts > maxPollAttempts) {
+            clearInterval(pollInterval);
+            setDownloadStates(prev => ({
+              ...prev,
+              [clipId]: { status: 'error', error: 'Render timed out' }
+            }));
+            return;
+          }
+          const statusRes = await fetch(`/api/clips/vertical-render/${jobId}`);
+          if (!statusRes.ok) return;
+          const statusData = await statusRes.json();
+
+          if (statusData.status === 'completed') {
+            clearInterval(pollInterval);
+            setDownloadStates(prev => ({
+              ...prev,
+              [clipId]: { status: 'ready', outputPath: statusData.outputPath }
+            }));
+          } else if (statusData.status === 'failed') {
+            clearInterval(pollInterval);
+            setDownloadStates(prev => ({
+              ...prev,
+              [clipId]: { status: 'error', error: statusData.error || 'Render failed' }
+            }));
+          } else {
+            setDownloadStates(prev => ({
+              ...prev,
+              [clipId]: { status: 'rendering', progress: statusData.progress || 0 }
+            }));
+          }
+        } catch {
+          // Continue polling on network errors
+        }
+      }, 2000);
+    } catch (error: any) {
+      setDownloadStates(prev => ({
+        ...prev,
+        [clipId]: { status: 'error', error: error.message || 'Failed to start render' }
+      }));
+    }
+  }, []);
+
+  const handleDownloadFile = useCallback((clip: Clip) => {
+    const state = downloadStates[clip.id];
+    if (state?.status === 'ready' && state.outputPath) {
+      const filename = state.outputPath.split('/').pop();
+      window.open(`/api/clips/vertical-download/${filename}`, '_blank');
+      setDownloadStates(prev => {
+        const next = { ...prev };
+        next[clip.id] = { status: 'idle' };
+        return next;
+      });
+    }
+  }, [downloadStates]);
+
   return (
-    <div className="space-y-6 max-w-[1400px] mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between border-b border-zinc-800 pb-4 gap-4">
+    <div className="space-y-6 max-w-[1600px] mx-auto h-full flex flex-col">
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between border-b border-zinc-800 pb-4 gap-4 shrink-0">
         <div className="space-y-1">
           <h1 className="text-3xl font-display font-bold tracking-tight text-white uppercase flex items-center gap-2">
-            <Film className="w-6 h-6 text-amber-500" />
-            ASSET LIBRARY
+            <Smartphone className="w-6 h-6 text-amber-500" />
+            VERTICAL CLIPS
           </h1>
-          <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest">Indexed and processed video fragments</p>
+          <p className="text-zinc-500 font-mono text-sm uppercase tracking-widest">竖屏剪辑素材 · 标题字幕包裹 · 一键下载</p>
         </div>
         
         <div className="flex items-center gap-2 font-mono text-xs">
@@ -105,19 +204,6 @@ export default function ClipLibrary() {
               ))}
             </SelectContent>
           </Select>
-          <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-            <SelectTrigger className="w-[140px] bg-zinc-900 border-zinc-800 rounded-sm uppercase tracking-widest focus:ring-amber-500 font-bold text-[10px]">
-              <SelectValue placeholder="CATEGORY" />
-            </SelectTrigger>
-            <SelectContent className="bg-zinc-950 border-zinc-800 rounded-sm font-mono uppercase text-[10px] font-bold tracking-widest">
-              <SelectItem value="all">ALL CATS</SelectItem>
-              {categoryOptions.map((category) => (
-                <SelectItem key={category} value={category}>
-                  {category}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
           <Select value={sortBy} onValueChange={setSortBy}>
             <SelectTrigger className="w-[140px] bg-zinc-900 border-zinc-800 rounded-sm uppercase tracking-widest focus:ring-amber-500 font-bold text-[10px]">
               <SelectValue placeholder="SORT" />
@@ -130,166 +216,198 @@ export default function ClipLibrary() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-        <AnimatePresence>
-          {filteredClips.map((clip, idx) => (
-            <motion.div 
-              key={clip.id} 
-              initial={{ opacity: 0, scale: 0.9, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              transition={{ delay: idx * 0.05, duration: 0.3 }}
-              className="group flex flex-col bg-zinc-900/30 border border-zinc-800 hover:border-amber-500/50 rounded-sm overflow-hidden transition-all duration-300 relative hover:-translate-y-1 hover:shadow-xl hover-sweep"
-            >
-              <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-transparent group-hover:border-amber-500 transition-colors z-10 m-0.5" />
-              <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-transparent group-hover:border-amber-500 transition-colors z-10 m-0.5" />
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3">
+          <AnimatePresence>
+            {filteredClips.map((clip, idx) => {
+              const dlState = downloadStates[clip.id] || { status: 'idle' };
+              return (
+                <motion.div
+                  key={clip.id}
+                  initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  transition={{ delay: idx * 0.03, duration: 0.3 }}
+                  className="group flex flex-col bg-zinc-900/30 border border-zinc-800 hover:border-amber-500/50 rounded-sm overflow-hidden transition-all duration-300 relative hover:-translate-y-1 hover:shadow-xl hover-sweep cursor-pointer"
+                  onClick={() => setSelectedClip(clip)}
+                >
+                  <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-transparent group-hover:border-amber-500 transition-colors z-10 m-0.5" />
+                  <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-transparent group-hover:border-amber-500 transition-colors z-10 m-0.5" />
 
-              <div className="relative aspect-[16/9] bg-zinc-900 overflow-hidden">
-                <img src={clip.thumbnail} alt={clip.title} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 opacity-80 group-hover:opacity-100 mix-blend-luminosity hover:mix-blend-normal" />
-                <div className="absolute inset-0 border-[0.5px] border-white/5 pointer-events-none mix-blend-overlay" />
-                
-                <div className="absolute inset-0 bg-zinc-950/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center backdrop-blur-[2px]">
-                  <Button
-                    type="button"
-                    size="icon"
-                    className="rounded-sm w-12 h-12 bg-amber-500 hover:bg-amber-400 text-zinc-950 scale-90 group-hover:scale-110 transition-transform shadow-[0_0_20px_rgba(245,158,11,0.5)] group/play"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openPreview(clip);
-                    }}
-                  >
-                    <Play className="w-5 h-5 ml-0.5 group-hover/play:animate-[wiggle_0.5s_ease-in-out]" fill="currentColor" />
-                  </Button>
-                </div>
+                  {/* Vertical (9:16) card layout */}
+                  <div className="relative aspect-[9/16] bg-zinc-900 overflow-hidden">
+                    <img
+                      src={clip.verticalCover || clip.thumbnail}
+                      alt={clip.title}
+                      className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+                    />
+                    <div className="absolute inset-0 border-[0.5px] border-white/5 pointer-events-none mix-blend-overlay" />
 
-                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-zinc-950 to-transparent">
-                   <div className="flex justify-between items-end">
-                      <span className="px-1.5 py-0.5 bg-black/80 border border-zinc-800 text-[10px] font-mono text-zinc-300 tracking-widest font-bold">
-                        {Math.floor((clip.endSec - clip.startSec) / 60)}m {Math.floor((clip.endSec - clip.startSec) % 60)}s
+                    {/* Dark gradient overlays for title and subtitle */}
+                    <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/85" />
+
+                    {/* Top section: KOL name tag */}
+                    <div className="absolute top-3 left-3 right-3">
+                      <span className="inline-block px-2 py-1 bg-amber-500 text-zinc-950 text-[9px] font-mono font-bold tracking-widest uppercase rounded-sm">
+                        {clip.kolName}
                       </span>
-                   </div>
-                </div>
-              </div>
+                    </div>
 
-              <div className="p-4 flex-1 flex flex-col pt-3">
-                <div className="flex items-center justify-between mb-2">
-                   <span className="text-[10px] font-mono font-bold text-amber-500 tracking-widest uppercase">{clip.topicCategory}</span>
-                   <span className="text-[10px] font-mono text-zinc-500 tracking-widest uppercase">SRC: {clip.kolName}</span>
-                </div>
-                
-                <h3 className="font-display font-bold text-zinc-100 leading-tight mb-2 line-clamp-2">
-                  {clip.title}
-                </h3>
-                
-                <p className="text-xs text-zinc-500 line-clamp-2 mb-4 flex-1 font-sans">
-                  {clip.summary}
-                </p>
-                
-                <div className="flex items-center justify-between pt-3 border-t border-zinc-800/50">
-                  <div className="flex gap-1.5 overflow-hidden">
-                    {clip.keywords.slice(0, 2).map(kw => (
-                      <span key={kw} className="text-[9px] font-mono font-bold text-zinc-400 bg-zinc-800/50 px-1.5 py-0.5 border border-zinc-700/50 tracking-widest uppercase rounded-sm">
-                        {kw}
-                      </span>
-                    ))}
-                    {clip.keywords.length > 2 && <span className="text-[10px] font-mono text-zinc-600">...</span>}
+                    {/* Play button overlay */}
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                      <Button
+                        type="button"
+                        size="icon"
+                        className="rounded-full w-14 h-14 bg-white/20 backdrop-blur-md hover:bg-amber-500 text-white hover:text-zinc-950 scale-90 group-hover:scale-110 transition-transform shadow-[0_0_20px_rgba(245,158,11,0.5)] group/play"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openPreview(clip);
+                        }}
+                      >
+                        <Play className="w-6 h-6 ml-0.5" fill="currentColor" />
+                      </Button>
+                    </div>
+
+                    {/* Bottom section: Title + subtitle + download */}
+                    <div className="absolute bottom-0 left-0 right-0 p-3 space-y-2">
+                      <h3 className="font-display font-bold text-white text-sm leading-tight line-clamp-3 drop-shadow-lg">
+                        {clip.title}
+                      </h3>
+                      <p className="text-[11px] text-zinc-300/90 line-clamp-2 leading-relaxed drop-shadow-md">
+                        {clip.videoTitle}
+                      </p>
+                      <div className="flex items-center justify-between pt-1">
+                        <span className="px-1.5 py-0.5 bg-black/60 border border-zinc-700 text-[9px] font-mono text-zinc-300 tracking-widest font-bold rounded-sm">
+                          {Math.floor((clip.endSec - clip.startSec) / 60)}m{Math.floor((clip.endSec - clip.startSec) % 60)}s
+                        </span>
+                        
+                        {/* Download button with states */}
+                        {dlState.status === 'idle' && (
+                          <Button variant="ghost" size="icon" onClick={(e) => handleDownloadVertical(clip, e)} className="h-7 w-7 text-white/70 hover:text-amber-400 hover:bg-transparent rounded-none transition-transform hover:scale-110">
+                            <Download className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {dlState.status === 'rendering' && (
+                          <div className="h-7 w-7 flex items-center justify-center">
+                            <Loader2 className="w-4 h-4 text-amber-400 animate-spin" />
+                          </div>
+                        )}
+                        {dlState.status === 'ready' && (
+                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDownloadFile(clip); }} className="h-7 w-7 text-emerald-400 hover:text-emerald-300 hover:bg-transparent rounded-none transition-transform hover:scale-110">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {dlState.status === 'error' && (
+                          <Button variant="ghost" size="icon" onClick={(e) => handleDownloadVertical(clip, e)} className="h-7 w-7 text-rose-400 hover:text-rose-300 hover:bg-transparent rounded-none transition-transform hover:scale-110" title={dlState.error}>
+                            <AlertCircle className="w-4 h-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => setSelectedClip(clip)} className="h-6 w-6 text-zinc-500 hover:text-amber-500 hover:bg-transparent rounded-none transition-transform hover:scale-110 group/btn">
-                    <Download className="w-4 h-4 group-hover/btn:animate-[wiggle_0.5s_ease-in-out]" />
-                  </Button>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </AnimatePresence>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
+        </div>
       </div>
 
+      {/* Detail Dialog */}
       <Dialog open={!!selectedClip} onOpenChange={(open) => !open && setSelectedClip(null)}>
-        <DialogContent className="max-w-[900px] p-0 bg-zinc-950 border border-zinc-800 rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.9)] overflow-hidden gap-0">
+        <DialogContent className="max-w-[500px] p-0 bg-zinc-950 border border-zinc-800 rounded-sm shadow-[0_0_50px_rgba(0,0,0,0.9)] overflow-hidden gap-0">
           {selectedClip && (
-            <div className="flex flex-col md:flex-row h-[500px]">
-              <div className="w-full md:w-[60%] bg-black relative group flex items-center justify-center border-b md:border-b-0 md:border-r border-zinc-800">
-                 <img src={selectedClip.thumbnail} className="absolute inset-0 w-full h-full object-cover opacity-30 group-hover:opacity-20 transition-opacity mix-blend-luminosity" />
-                 
-                 <div className="absolute top-4 left-4 font-mono text-[10px] text-amber-500 flex flex-col gap-1 tracking-widest pointer-events-none font-bold">
-                   <span>REC_ACT</span>
-                   <span>F_RATE: 29.97</span>
-                   <span>RES: 1080p</span>
-                 </div>
-                 
-                 <button
+            <div className="flex flex-col max-h-[85vh]">
+              {/* Vertical preview */}
+              <div className="relative aspect-[9/16] max-h-[60vh] bg-black overflow-hidden">
+                <img
+                  src={selectedClip.verticalCover || selectedClip.thumbnail}
+                  alt={selectedClip.title}
+                  className="w-full h-full object-cover opacity-70"
+                />
+                <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/90" />
+
+                {/* Top: KOL tag */}
+                <div className="absolute top-4 left-4 right-4">
+                  <span className="inline-block px-2 py-1 bg-amber-500 text-zinc-950 text-[10px] font-mono font-bold tracking-widest uppercase rounded-sm">
+                    {selectedClip.kolName}
+                  </span>
+                </div>
+
+                {/* Play button */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <button
                     type="button"
-                    className="relative z-10 w-16 h-16 rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 flex items-center justify-center transition-transform hover:scale-[1.15] active:scale-95 shadow-[0_0_20px_rgba(245,158,11,0.4)] group hover-sweep hover-fx"
+                    className="w-16 h-16 rounded-full bg-white/20 backdrop-blur-md hover:bg-amber-500 text-white hover:text-zinc-950 flex items-center justify-center transition-transform hover:scale-110 shadow-[0_0_20px_rgba(245,158,11,0.5)]"
                     onClick={() => openPreview(selectedClip)}
                   >
-                    <Play className="w-8 h-8 ml-1 group-hover-wiggle relative z-10" fill="currentColor" />
-                 </button>
-                 
-                 <div className="absolute bottom-0 inset-x-0 h-10 bg-zinc-950/80 backdrop-blur-sm border-t border-zinc-800 flex items-center px-4 gap-3">
-                    <button
-                      type="button"
-                      className="p-0 border-0 bg-transparent"
-                      onClick={() => openPreview(selectedClip)}
-                      aria-label="Play clip"
-                    >
-                      <Play className="w-4 h-4 text-zinc-400 cursor-pointer hover:text-white" />
-                    </button>
-                    <div className="flex-1 h-1.5 bg-zinc-800 rounded-sm relative cursor-pointer group/bar">
-                      <div className="absolute left-0 top-0 bottom-0 bg-amber-500 w-[30%] shadow-[0_0_8px_rgba(245,158,11,0.8)]" />
-                      <div className="absolute left-[30%] top-1/2 -translate-y-1/2 w-3 h-3 bg-white shadow-sm opacity-0 group-hover/bar:opacity-100 transition-opacity rounded-sm" />
-                    </div>
-                    <span className="font-mono text-[10px] tracking-widest font-bold text-zinc-400">{formatDuration(selectedClip.startSec, selectedClip.endSec)}</span>
-                 </div>
+                    <Play className="w-8 h-8 ml-1" fill="currentColor" />
+                  </button>
+                </div>
+
+                {/* Bottom: Title */}
+                <div className="absolute bottom-0 left-0 right-0 p-4 space-y-2">
+                  <h2 className="text-lg font-display font-bold text-white leading-tight drop-shadow-lg">
+                    {selectedClip.title}
+                  </h2>
+                  <p className="text-xs text-zinc-300/90 line-clamp-2 leading-relaxed drop-shadow-md">
+                    {selectedClip.videoTitle}
+                  </p>
+                </div>
               </div>
 
-              <div className="w-full md:w-[40%] flex flex-col bg-zinc-900/50">
-                <div className="px-6 py-4 border-b border-zinc-800 bg-zinc-950 flex items-center gap-2">
-                   <Shapes className="w-4 h-4 text-amber-500" />
-                   <h3 className="font-display font-bold tracking-widest uppercase text-xs text-zinc-300">Asset Details</h3>
-                </div>
-                
-                <div className="p-6 flex-1 overflow-y-auto space-y-6 shrink-0 font-sans">
-                  <div>
-                    <div className="flex items-center gap-2 mb-2 font-mono text-[10px] tracking-widest uppercase text-zinc-500 font-bold">
-                       <span className="text-amber-500">{selectedClip.topicCategory}</span>
-                       <span>//</span>
-                       <span>SRC: {selectedClip.kolName}</span>
-                    </div>
-                    <h2 className="text-xl font-display font-bold text-zinc-100 leading-tight mb-2">
-                      {selectedClip.title}
-                    </h2>
-                    <p className="text-[10px] text-amber-500/80 font-mono tracking-widest uppercase truncate border border-amber-500/20 bg-amber-500/5 px-2 py-1 rounded-sm w-max">
-                      REF: {selectedClip.videoTitle}
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500 mb-1">Generated Summary</h4>
-                    <p className="text-sm leading-relaxed text-zinc-300 border-l-2 border-zinc-700 pl-3 py-1">
-                      {selectedClip.summary}
-                    </p>
-                  </div>
-
-                  <div>
-                    <h4 className="text-[10px] font-mono font-bold uppercase tracking-widest text-zinc-500 mb-2">Semantic Keywords</h4>
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedClip.keywords.map(kw => (
-                        <span key={kw} className="font-mono font-bold text-[10px] tracking-widest uppercase text-zinc-400 bg-zinc-800 px-2 py-0.5 border border-zinc-700/50 rounded-sm">
-                          {kw}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
+              {/* Info bar */}
+              <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+                <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-widest font-bold text-zinc-500">
+                  <span>SRC: {selectedClip.kolName}</span>
+                  <span>{Math.floor((selectedClip.endSec - selectedClip.startSec) / 60)}m{Math.floor((selectedClip.endSec - selectedClip.startSec) % 60)}s</span>
                 </div>
 
-                <div className="p-4 border-t border-zinc-800 bg-zinc-950 grid grid-cols-2 gap-2 mt-auto">
-                  <Button variant="outline" className="w-full rounded-sm border-zinc-700 bg-zinc-900 text-zinc-300 hover:text-white hover:bg-zinc-800 font-display uppercase tracking-widest text-[10px] font-bold h-10 group hover-fx hover-sweep">
-                    <Copy className="w-3.5 h-3.5 mr-2 group-hover-wiggle" />
-                    COPY REF
-                  </Button>
-                  <Button className="w-full rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 font-display uppercase tracking-widest text-[10px] font-bold h-10 shadow-[0_0_15px_rgba(245,158,11,0.2)] group hover-fx hover-sweep hover:scale-105 transition-transform">
-                    <Download className="w-3.5 h-3.5 mr-2 group-hover-wiggle relative z-10" />
-                    <span className="relative z-10">EXTRACT</span>
-                  </Button>
+                {/* Download vertical video button */}
+                <div className="pt-2">
+                  {(() => {
+                    const dlState = downloadStates[selectedClip.id] || { status: 'idle' };
+                    if (dlState.status === 'idle') {
+                      return (
+                        <Button
+                          onClick={() => handleDownloadVertical(selectedClip)}
+                          className="w-full rounded-sm bg-amber-500 hover:bg-amber-400 text-zinc-950 font-display uppercase tracking-widest text-[10px] font-bold h-10 shadow-[0_0_15px_rgba(245,158,11,0.2)] group hover-fx hover-sweep hover:scale-105 transition-transform"
+                        >
+                          <Download className="w-3.5 h-3.5 mr-2 group-hover-wiggle" />
+                          下载竖屏视频（带标题字幕）
+                        </Button>
+                      );
+                    }
+                    if (dlState.status === 'rendering') {
+                      return (
+                        <Button disabled className="w-full rounded-sm bg-zinc-800 text-amber-400 font-display uppercase tracking-widest text-[10px] font-bold h-10">
+                          <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                          渲染中 {dlState.progress ? `${dlState.progress}%` : '...'}
+                        </Button>
+                      );
+                    }
+                    if (dlState.status === 'ready') {
+                      return (
+                        <Button
+                          onClick={() => handleDownloadFile(selectedClip)}
+                          className="w-full rounded-sm bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-display uppercase tracking-widest text-[10px] font-bold h-10 shadow-[0_0_15px_rgba(16,185,129,0.2)] group hover:scale-105 transition-transform"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5 mr-2" />
+                          下载已就绪 · 点击下载
+                        </Button>
+                      );
+                    }
+                    if (dlState.status === 'error') {
+                      return (
+                        <Button
+                          onClick={() => handleDownloadVertical(selectedClip)}
+                          className="w-full rounded-sm bg-rose-500/20 border border-rose-500/50 text-rose-400 hover:bg-rose-500/30 font-display uppercase tracking-widest text-[10px] font-bold h-10"
+                        >
+                          <AlertCircle className="w-3.5 h-3.5 mr-2" />
+                          渲染失败 · 重试
+                        </Button>
+                      );
+                    }
+                    return null;
+                  })()}
                 </div>
               </div>
             </div>
@@ -297,6 +415,7 @@ export default function ClipLibrary() {
         </DialogContent>
       </Dialog>
 
+      {/* YouTube preview dialog */}
       <Dialog open={!!previewClip} onOpenChange={(open) => !open && setPreviewClip(null)}>
         <DialogContent className="max-w-5xl w-[95vw] p-0 gap-0 bg-zinc-950 border border-zinc-800 overflow-hidden">
           {previewClip && (

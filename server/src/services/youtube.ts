@@ -67,47 +67,135 @@ export function extractChannelHandle(channelUrl: string): string {
 }
 
 /**
- * Parse VTT subtitle file
+ * Clean a VTT text line: strip HTML tags, inline timestamp cues, and alignment attrs
+ * e.g. "<00:00:33.699><c>exclusive</c>" → "exclusive"
  */
-function parseVTT(content: string): SubtitleSegment[] {
-  const segments: SubtitleSegment[] = [];
-  const lines = content.split('\n');
-  let currentSegment: SubtitleSegment | null = null;
+function cleanVTTLine(line: string): string {
+  // Remove inline timestamp cues like <00:00:33.699>
+  let s = line.replace(/<\d{2}:\d{2}:\d{2}\.\d{3}>/g, '');
+  // Remove HTML tags like <c>, </c>, <b>, </b>, <i>, </i>
+  s = s.replace(/<\/?[^>]+>/g, '');
+  return s.trim();
+}
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
+/**
+ * Parse VTT subtitle file
+ *
+ * Two-pass approach (matching the reference Python implementation):
+ *  Pass 1 – parse each block, strip HTML/cue tags, deduplicate exact duplicates
+ *  Pass 2 – remove overlapping prefix between adjacent subtitles
+ */
+export function parseVTT(content: string): SubtitleSegment[] {
+  // ------------------------------------------------------------------
+  // Pass 1: Parse blocks, clean text, remove exact duplicates
+  // ------------------------------------------------------------------
+  const timeRe = /(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/;
+  const blocks = content.split(/\n\n+/);
 
-    // Skip WEBVTT header and empty lines
-    if (line === 'WEBVTT' || line === '' || line.startsWith('Kind:') || line.startsWith('Language:')) {
-      continue;
+  const unique: SubtitleSegment[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const block of blocks) {
+    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length === 0) continue;
+
+    // Find the timestamp line
+    let start = 0;
+    let end = 0;
+    let foundTime = false;
+    for (const line of lines) {
+      const m = line.match(timeRe);
+      if (m) {
+        start = parseVTTTime(m[1]);
+        end = parseVTTTime(m[2]);
+        foundTime = true;
+        break;
+      }
+    }
+    if (!foundTime) continue;
+
+    // Collect subtitle text (skip timestamp lines & alignment info)
+    const textParts: string[] = [];
+    for (const line of lines) {
+      if (timeRe.test(line)) continue;
+      if (line.startsWith('align:') || line.startsWith('position:')) continue;
+      const cleaned = cleanVTTLine(line);
+      if (cleaned) textParts.push(cleaned);
+    }
+    const subtitleText = textParts.join(' ').trim();
+    if (!subtitleText) continue;
+
+    // Deduplicate: same timestamp + same text → skip
+    const key = `${m0(start)}_${m0(end)}_${subtitleText}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+
+    unique.push({ start, end, text: subtitleText });
+  }
+
+  // ------------------------------------------------------------------
+  // Pass 2: Remove overlapping prefix between adjacent subtitles
+  // (mirrors Python reference: if current ⊂ prev → skip; if prev is
+  //  prefix of current → strip; else word-level overlap removal)
+  // ------------------------------------------------------------------
+  const result: SubtitleSegment[] = [];
+  for (let i = 0; i < unique.length; i++) {
+    const item = unique[i];
+    // Work on the ORIGINAL (un-deduplicated) text – this is key!
+    // unique[i] already has full text from VTT; Pass 2 trims overlap
+    // against the *already-processed* previous output.
+    let currentText = item.text;
+
+    if (result.length > 0) {
+      const prevText = result[result.length - 1].text;
+
+      // If current text is fully contained in previous → skip entirely
+      if (currentText && prevText.includes(currentText)) continue;
+
+      // If previous text is a prefix of current → strip the overlap
+      if (currentText.startsWith(prevText)) {
+        currentText = currentText.slice(prevText.length).trim();
+      } else {
+        // Word-level overlap removal (e.g. last 1-3 words of prev == first 1-3 words of current)
+        currentText = removeOverlappingWords(prevText, currentText);
+      }
     }
 
-    // Parse timestamp line: 00:00:01.360 --> 00:00:03.040
-    const timestampMatch = line.match(/(\d{2}:\d{2}:\d{2}\.\d{3})\s*-->\s*(\d{2}:\d{2}:\d{2}\.\d{3})/);
-    if (timestampMatch) {
-      const start = parseVTTTime(timestampMatch[1]);
-      const end = parseVTTTime(timestampMatch[2]);
-
-      if (currentSegment) {
-        segments.push(currentSegment);
-      }
-
-      currentSegment = { start, end, text: '' };
-    } else if (currentSegment && line && !line.startsWith('[')) {
-      // This is subtitle text
-      if (currentSegment.text) {
-        currentSegment.text += ' ';
-      }
-      currentSegment.text += line;
+    if (currentText) {
+      result.push({ start: item.start, end: item.end, text: currentText });
     }
   }
 
-  // Add the last segment
-  if (currentSegment) {
-    segments.push(currentSegment);
+  return result;
+}
+
+/** Helper: minimal string key for dedup (avoids floating-point noise) */
+function m0(n: number): string { return n.toFixed(3); }
+
+/**
+ * Remove overlapping words between the end of prevText and start of currentText.
+ * Checks up to 3 words of overlap (mirrors the Python reference).
+ */
+function removeOverlappingWords(prevText: string, currentText: string): string {
+  const prevWords = prevText.split(/\s+/);
+  const currWords = currentText.split(/\s+/);
+  if (prevWords.length === 0 || currWords.length === 0) return currentText;
+
+  const maxCheck = Math.min(3, prevWords.length, currWords.length);
+  let overlapCount = 0;
+
+  for (let i = 1; i <= maxCheck; i++) {
+    const prevEnd = prevWords.slice(-i).join(' ').toLowerCase();
+    const currStart = currWords.slice(0, i).join(' ').toLowerCase();
+    if (prevEnd === currStart) {
+      overlapCount = i;
+    }
   }
 
-  return segments;
+  if (overlapCount > 0) {
+    return currWords.slice(overlapCount).join(' ');
+  }
+  return currentText;
 }
 
 /**
@@ -147,8 +235,10 @@ async function getVideoWithSubtitles(videoId: string): Promise<VideoMetadata | n
     let subtitles: SubtitleSegment[] = [];
 
     try {
+      // Use --skip-download to avoid downloading the full video when we only need subtitles
       await runYtDlp([
         ...commonArgs,
+        '--skip-download',
         '--write-sub',
         '--write-auto-sub',
         '--sub-lang',
