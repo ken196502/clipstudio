@@ -238,29 +238,20 @@ ${subtitlesText}
     { role: 'user', content: userPrompt },
   ];
 
-  console.log('=== LLM request payload ===');
-  console.log(JSON.stringify(messages, null, 2));
+  let response: any;
+  try {
+    response = await callLLM([...messages], { responseFormat: true });
+  } catch (e: any) {
+    const msg = String(e?.message || e);
+    // Some providers/models reject response_format with upstream 400.
+    if (/LLM API error:\s*400\b/i.test(msg) || /upstream_error/i.test(msg)) {
+      response = await callLLM([...messages], { responseFormat: false });
+    } else {
+      throw e;
+    }
+  }
 
-  // 区域不支持, mock一份
-  const mockResponse = {
-    choices: [
-      {
-        message: {
-          content: JSON.stringify({
-            clips: [
-              {
-                title: "伊朗战争推高美国通胀，油价上涨引关注",
-                start_sec: 10,
-                end_sec: 90
-              }
-            ]
-          })
-        }
-      }
-    ]
-  };
-
-  const content = extractAssistantText(mockResponse);
+  const content = extractAssistantText(response);
   if (!content) throw new Error('No text in LLM response');
 
   const parsed = parseJsonObject(content) as any;
